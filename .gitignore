@@ -27,7 +27,8 @@ backend-go/upload/
 backend-java/data/
 backend-java/upload/
 backend-java/uploads/
-backend-java/target/
+backend-java/target/*
+!backend-java/target/tripcanvas-backend-0.1.0-SNAPSHOT.jar
 backend-java/**/*.sqlite
 backend-java/**/*.sqlite-*
 *.sqlite
