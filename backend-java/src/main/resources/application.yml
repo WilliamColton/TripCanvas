@@ -1,0 +1,40 @@
+server:
+  port: 3001
+
+spring:
+  application:
+    name: tripcanvas-backend
+  datasource:
+    driver-class-name: org.sqlite.JDBC
+    url: jdbc:sqlite:${tripcanvas.data-dir:./data}/app.sqlite
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/migration/V1__init.sql
+      continue-on-error: true
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+mybatis-flex:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+tripcanvas:
+  root-dir: .
+  data-dir: ./data
+  upload-dir: ./upload
+  config-file: ./config.json
+  thread-pools:
+    generation-tasks:
+      core-size: 4
+      max-size: 4
+      queue-capacity: 200
+      keep-alive-seconds: 60
+    image-requests:
+      core-size: 20
+      max-size: 20
+      queue-capacity: 200
+      keep-alive-seconds: 60

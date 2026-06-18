@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Backend config (contains secrets)
+backend-go/config.json
+backend-java/config.json
+backend-java/config.local.json
+backend-java/*.local.json
+backend-java/src/main/resources/application-local.yml
+backend-java/src/main/resources/application-*.local.yml
+
+# Local env/secrets
+.env
+.env.*
+!.env.example
+
+# Dev proxy
+dev-proxy.config.json
+
+# Backend runtime data
+backend-go/data/
+backend-go/upload/
+backend-java/data/
+backend-java/upload/
+backend-java/uploads/
+backend-java/target/
+backend-java/**/*.sqlite
+backend-java/**/*.sqlite-*
+*.sqlite
+*.sqlite-*
+**/upload/
+**/uploads/
+
+# Test coverage
+coverage/
+
+# Local tool output
+.playwright-cli/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# GSD planning docs
+.planning/research/
+.planning/codebase/
+
+# OS
+.DS_Store
+Thumbs.db
