@@ -29,6 +29,7 @@ export default defineConfig(({ command }) => {
     },
     server: {
       host: true,
+      allowedHosts: ['test2026618.jingpinlutu.com'],
       proxy:
         devProxyConfig?.enabled
           ? {
