@@ -42,6 +42,12 @@ coverage/
 .playwright-cli/
 *.log
 
+# Development reference materials
+README.md
+docs/
+*.xd
+*.rar
+
 # IDE
 .vscode/
 .idea/
