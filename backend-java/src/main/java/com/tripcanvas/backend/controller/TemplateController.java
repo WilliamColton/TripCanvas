@@ -10,6 +10,7 @@ import com.tripcanvas.backend.service.PromptTemplateService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.io.IOException;
+import java.net.URI;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.HttpHeaders;
@@ -67,14 +68,20 @@ public class TemplateController {
     public ApiPayloads.PreviewImage uploadPreview(HttpServletRequest request, @RequestParam("image") MultipartFile file) throws IOException {
         String mime = file.getContentType() == null || file.getContentType().isBlank() ? "image/png" : file.getContentType();
         ImageResponse image = imageService.saveImageBuffer(AuthContext.adminUserId(request), file.getBytes(), mime, "upload");
-        return new ApiPayloads.PreviewImage(image.id(), "/api/template-preview-images/" + image.id(), image.createdAt());
+        String url = image.url() != null && !image.url().isBlank() ? image.url() : "/api/template-preview-images/" + image.id();
+        return new ApiPayloads.PreviewImage(image.id(), url, image.createdAt());
     }
 
     @GetMapping("/api/template-preview-images/{id}")
-    public ResponseEntity<FileSystemResource> getPreviewImage(@PathVariable String id) {
+    public ResponseEntity<?> getPreviewImage(@PathVariable String id) {
         ImageService.ImageFile imageFile = imageService.readTemplatePreviewImageFile(id);
+        // COS 模式 302 跳直链；本地模式返回磁盘字节。
+        if (imageFile.path() == null && imageFile.accessUrl() != null && !imageFile.accessUrl().isBlank()) {
+            return ResponseEntity.status(302)
+                .location(URI.create(imageFile.accessUrl()))
+                .build();
+        }
         return ResponseEntity.ok()
-            .header(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "*")
             .contentLength(imageFile.image().size())
             .contentType(MediaType.parseMediaType(imageFile.image().mime()))
             .body(new FileSystemResource(imageFile.path()));

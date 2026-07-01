@@ -11,6 +11,8 @@ public record ImageResponse(
     long size,
     String sha256,
     String source,
-    long createdAt
+    long createdAt,
+    /** 对外访问直链：COS 预签名/公开 URL；本地模式留空，前端走 /api/images/{id}。 */
+    String url
 ) {
 }

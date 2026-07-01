@@ -18,7 +18,6 @@ import com.tripcanvas.backend.service.TaskService;
 import com.tripcanvas.backend.util.DataUrlUtils;
 import com.tripcanvas.backend.util.ImageSizeUtils;
 import com.tripcanvas.backend.util.Times;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -181,8 +180,9 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
         }
         List<ImageFileInput> result = new ArrayList<>();
         for (String id : ids) {
-            ImageService.ImageFile image = imageService.readImageFileForUser(userId, id);
-            result.add(new ImageFileInput(Files.readAllBytes(image.path()), image.image().mime()));
+            byte[] bytes = imageService.readBytesForUser(userId, id);
+            String mime = imageService.readImageFileForUser(userId, id).image().mime();
+            result.add(new ImageFileInput(bytes, mime));
         }
         return result;
     }
@@ -191,8 +191,9 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
         if (maskImageId == null || maskImageId.isBlank()) {
             return null;
         }
-        ImageService.ImageFile image = imageService.readImageFileForUser(userId, maskImageId);
-        return new ImageFileInput(Files.readAllBytes(image.path()), image.image().mime());
+        byte[] bytes = imageService.readBytesForUser(userId, maskImageId);
+        String mime = imageService.readImageFileForUser(userId, maskImageId).image().mime();
+        return new ImageFileInput(bytes, mime);
     }
 
     private List<GeneratedImage> finalizeAttribution(List<GeneratedImage> images, String requestTier) {

@@ -8,6 +8,9 @@ export interface ImageDimensions {
 export async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image()
+    // 远程 COS/CDN 直链绘制到 canvas 时需匿名跨域，配合桶 CORS 配置避免画布被污染。
+    // 对 data:/blob: 同源 URL 无副作用。
+    image.crossOrigin = 'anonymous'
     image.onload = () => resolve(image)
     image.onerror = () => reject(new Error('图片加载失败'))
     image.src = dataUrl
