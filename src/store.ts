@@ -27,6 +27,7 @@ import {
   getTemplates,
   getTasks as fetchTasks,
   putRemoteTask,
+  resolveImageUrl,
   submitGenerateTask,
   submitEditTask,
   uploadImage,
@@ -35,22 +36,82 @@ import {
   type AuthUser,
 } from './lib/backendApi'
 import {
-  hashDataUrl,
-  getImage,
-  putImage,
+  hashFile,
 } from './lib/db'
 import { validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
 import { normalizeImageSize } from './lib/size'
 
 // ===== Image cache =====
-// 内存缓存优先保存 data URL；远程 URL 只作为临时回退。
+// 内存缓存只保存图片对外访问直链（COS 预签名/公开直链，或本地带 token 的回退 URL）。
+// 不再 fetch 字节、不再转 base64 dataURL、不再写 IndexedDB：
+// 浏览器/CDN HTTP 缓存接管，<img> 直连 COS，字节不经应用服务器。
 
 const imageCache = new Map<string, string>()
-const imageContentFetches = new Map<string, Promise<string | undefined>>()
+const IMAGE_URL_CACHE_KEY = 'tripcanvas-image-url-cache-v1'
+// 后端 COS 签名默认 7 天。前端缓存略短一点，避免临界过期 URL 被复用。
+const IMAGE_URL_CACHE_TTL_MS = 6 * 24 * 60 * 60 * 1000
 
-function isDataUrl(src: string): boolean {
-  return src.startsWith('data:')
+interface PersistedImageUrl {
+  url: string
+  expiresAt: number
+}
+
+type PersistedImageUrlCache = Record<string, PersistedImageUrl>
+
+function readPersistedImageUrlCache(): PersistedImageUrlCache {
+  try {
+    const raw = localStorage.getItem(IMAGE_URL_CACHE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as PersistedImageUrlCache
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writePersistedImageUrlCache(cache: PersistedImageUrlCache) {
+  try {
+    localStorage.setItem(IMAGE_URL_CACHE_KEY, JSON.stringify(cache))
+  } catch { /* ignore quota/private-mode errors */ }
+}
+
+function shouldPersistImageUrl(url: string): boolean {
+  // 只持久化远程对象存储/CDN URL。不要持久化 blob: 本地预览，也不要持久化带 JWT 的 /api/images 兜底 URL。
+  return /^https?:\/\//i.test(url) && !url.includes('/api/images/')
+}
+
+function getPersistedImageUrl(id: string): string | undefined {
+  const cache = readPersistedImageUrlCache()
+  const entry = cache[id]
+  if (!entry) return undefined
+  if (!entry.url || entry.expiresAt <= Date.now()) {
+    delete cache[id]
+    writePersistedImageUrlCache(cache)
+    return undefined
+  }
+  imageCache.set(id, entry.url)
+  return entry.url
+}
+
+function persistImageUrl(id: string, url: string) {
+  if (!shouldPersistImageUrl(url)) return
+  const cache = readPersistedImageUrlCache()
+  cache[id] = { url, expiresAt: Date.now() + IMAGE_URL_CACHE_TTL_MS }
+  writePersistedImageUrlCache(cache)
+}
+
+function removePersistedImageUrl(id: string) {
+  const cache = readPersistedImageUrlCache()
+  if (!(id in cache)) return
+  delete cache[id]
+  writePersistedImageUrlCache(cache)
+}
+
+function clearPersistedImageUrlCache() {
+  try {
+    localStorage.removeItem(IMAGE_URL_CACHE_KEY)
+  } catch { /* ignore */ }
 }
 
 // ===== Global polling (fallback for page refresh recovery) =====
@@ -85,7 +146,7 @@ function clearLocalSessionState() {
   stopPolling()
   cancelAllStreams()
   imageCache.clear()
-  imageContentFetches.clear()
+  clearPersistedImageUrlCache()
   useStore.getState().setAuthUser(null)
   useStore.getState().setTasks([])
   useStore.setState({ templates: [], templatesLoaded: false, selectedTemplateId: '', selectedTemplateResolutionId: '', templateInputs: {} })
@@ -116,7 +177,7 @@ async function pollRunningTasks() {
 
       if (remote.status === 'done') {
         for (const imgId of remote.outputImages || []) {
-          void warmImageContentCache(imgId)
+          void ensureImageCached(imgId)
         }
         const { tasks: currentTasks, setTasks } = useStore.getState()
         setTasks(currentTasks.map(t => t.id === local.id ? { ...t, ...remote } : t))
@@ -144,84 +205,22 @@ export function getCachedImage(id: string): string | undefined {
   return imageCache.get(id)
 }
 
-async function setCacheFromIdbOrRemote(id: string) {
-  try {
-    const stored = await getImage(id)
-    if (stored?.dataUrl) {
-      imageCache.set(id, stored.dataUrl)
-      return
-    }
-  } catch { /* ignore */ }
-  imageCache.set(id, getRemoteImageDataUrl(id))
-}
-
+/**
+ * 按 id 解析图片对外访问直链并缓存。COS 模式返回预签名直链，<img> 直连 COS；
+ * 本地模式回退到带 token 的 /api/images/{id}。不再转 base64、不再写 IndexedDB。
+ */
 export async function ensureImageCached(id: string): Promise<string | undefined> {
   const cached = imageCache.get(id)
-  if (cached && isDataUrl(cached)) return cached
+  if (cached) return cached
+
+  const persisted = getPersistedImageUrl(id)
+  if (persisted) return persisted
 
   try {
-    const stored = await getImage(id)
-    if (stored?.dataUrl) {
-      imageCache.set(id, stored.dataUrl)
-      return stored.dataUrl
-    }
-  } catch { /* ignore IDB errors */ }
-
-  const dataUrl = await fetchImageContentOnce(id)
-  if (dataUrl) return dataUrl
-
-  const url = cached || getRemoteImageDataUrl(id)
-  imageCache.set(id, url)
-  return url
-}
-
-async function warmImageContentCache(id: string): Promise<string | undefined> {
-  const cached = imageCache.get(id)
-  if (cached && isDataUrl(cached)) return cached
-
-  try {
-    const stored = await getImage(id)
-    if (stored?.dataUrl) {
-      imageCache.set(id, stored.dataUrl)
-      return stored.dataUrl
-    }
-  } catch { /* ignore IDB errors */ }
-
-  const dataUrl = await fetchImageContentOnce(id)
-  if (dataUrl) return dataUrl
-
-  const url = cached || getRemoteImageDataUrl(id)
-  imageCache.set(id, url)
-  return undefined
-}
-
-function fetchImageContentOnce(id: string): Promise<string | undefined> {
-  const existing = imageContentFetches.get(id)
-  if (existing) return existing
-
-  const request = fetchAndCacheImage(id).finally(() => {
-    imageContentFetches.delete(id)
-  })
-  imageContentFetches.set(id, request)
-  return request
-}
-
-/** 从后端 fetch 图片并转为 base64 dataUrl，存入缓存和 IDB */
-async function fetchAndCacheImage(id: string): Promise<string | undefined> {
-  const url = getRemoteImageDataUrl(id)
-  try {
-    const resp = await fetch(url, { cache: 'no-store' })
-    if (!resp.ok) return undefined
-    const blob = await resp.blob()
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onloadend = () => resolve(reader.result as string)
-      reader.onerror = reject
-      reader.readAsDataURL(blob)
-    })
-    imageCache.set(id, dataUrl)
-    putImage({ id, dataUrl, createdAt: Date.now(), source: 'generated' })
-    return dataUrl
+    const url = await resolveImageUrl(id)
+    imageCache.set(id, url)
+    persistImageUrl(id, url)
+    return url
   } catch {
     return undefined
   }
@@ -538,17 +537,11 @@ export async function bootstrapBackendSession() {
   useStore.getState().setSettings({ ...publicConfig })
   void useStore.getState().loadTemplates().catch(() => {})
   imageCache.clear()
-  const outputImageIdsToWarm: string[] = []
+  // 懒解析：仅预热输出图直链（输入/遮罩等用到时再解析），不再 fetch 字节、不再写 IndexedDB。
   for (const task of tasks) {
-    for (const id of task.inputImageIds || []) await setCacheFromIdbOrRemote(id)
-    if (task.maskImageId) await setCacheFromIdbOrRemote(task.maskImageId)
-    for (const id of task.outputImages || []) {
-      await setCacheFromIdbOrRemote(id)
-      if (task.status === 'done') outputImageIdsToWarm.push(id)
+    if (task.status === 'done') {
+      for (const id of task.outputImages || []) void ensureImageCached(id)
     }
-  }
-  for (const id of outputImageIdsToWarm) {
-    void warmImageContentCache(id)
   }
 
   // Resume polling if any tasks are still running
@@ -560,10 +553,6 @@ export async function bootstrapBackendSession() {
 export async function logout() {
   clearBackendToken()
   clearLocalSessionState()
-}
-
-function getRemoteImageDataUrl(id: string): string {
-  return `${import.meta.env.VITE_BACKEND_URL?.trim()?.replace(/\/+$/, '') || 'http://localhost:3001'}/api/images/${encodeURIComponent(id)}?token=${encodeURIComponent(getBackendToken())}`
 }
 
 // ===== Actions =====
@@ -757,8 +746,8 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     try {
       const maskUploaded = await uploadImage(maskDraft.maskDataUrl, 'mask')
       maskImageId = maskUploaded.id
-      putImage({ id: maskImageId, dataUrl: maskDraft.maskDataUrl, createdAt: maskUploaded.createdAt, source: 'mask' })
-      imageCache.set(maskImageId, maskDraft.maskDataUrl)
+      imageCache.set(maskImageId, maskUploaded.dataUrl)
+      persistImageUrl(maskImageId, maskUploaded.dataUrl)
       updateTaskLocal(taskId, { maskImageId })
     } catch (err) {
       if (!inputImages.some((img) => img.id === maskDraft.targetImageId)) {
@@ -774,13 +763,12 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     const uploadedImages: typeof orderedInputImages = []
     for (const img of orderedInputImages) {
       if (!img.dataUrl.startsWith('http')) {
-        const originalDataUrl = img.dataUrl
-        const uploaded = await uploadImage(originalDataUrl, 'upload')
-        putImage({ id: uploaded.id, dataUrl: originalDataUrl, createdAt: uploaded.createdAt, source: 'upload' })
+        const uploaded = await uploadImage(img.dataUrl, 'upload')
         imageCache.delete(img.id)
-        imageCache.set(uploaded.id, originalDataUrl)
+        imageCache.set(uploaded.id, uploaded.dataUrl)
+        persistImageUrl(uploaded.id, uploaded.dataUrl)
         idMap.set(img.id, uploaded.id)
-        uploadedImages.push({ ...img, id: uploaded.id, dataUrl: getRemoteImageDataUrl(uploaded.id) })
+        uploadedImages.push({ ...img, id: uploaded.id, dataUrl: uploaded.dataUrl })
       } else {
         uploadedImages.push(img)
       }
@@ -815,7 +803,7 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
 function handleTaskDone(taskId: string, remote: TaskRecord) {
   const local = useStore.getState().tasks.find(t => t.id === taskId)
   for (const imgId of remote.outputImages || []) {
-    void warmImageContentCache(imgId)
+    void ensureImageCached(imgId)
   }
   const { tasks: currentTasks, setTasks } = useStore.getState()
   setTasks(currentTasks.map(t => t.id === taskId ? { ...t, ...remote } : t))
@@ -1002,6 +990,7 @@ async function deleteUnreferencedRemoteImages(imageIds: Set<string>, stillUsed: 
     try {
       await deleteRemoteImage(imgId)
       imageCache.delete(imgId)
+      removePersistedImageUrl(imgId)
     } catch {
       failed++
     }
@@ -1072,40 +1061,22 @@ export async function removeTask(task: TaskRecord) {
 }
 
 
-/** 添加图片到输入（文件上传）—— 仅放入内存缓存，不写 IndexedDB */
+/** 添加图片到输入（文件上传）—— 用 objectURL 预览，不转 base64、不写 IndexedDB */
 export async function addImageFromFile(file: File): Promise<void> {
   if (!file.type.startsWith('image/')) return
-  const dataUrl = await fileToDataUrl(file)
-  const id = await hashDataUrl(dataUrl)
+  const id = await hashFile(file)
+  const dataUrl = URL.createObjectURL(file)
   imageCache.set(id, dataUrl)
   useStore.getState().addInputImage({ id, dataUrl })
 }
 
-/** 添加图片到输入（右键菜单）—— 支持 data/blob/http URL */
+/** 添加图片到输入（右键菜单）—— 支持 data/blob/http URL，统一转 blob 预览 */
 export async function addImageFromUrl(src: string): Promise<void> {
   const res = await fetch(src)
   const blob = await res.blob()
   if (!blob.type.startsWith('image/')) throw new Error('不是有效的图片')
-  const dataUrl = await blobToDataUrl(blob)
-  const id = await hashDataUrl(dataUrl)
+  const id = await hashFile(blob)
+  const dataUrl = URL.createObjectURL(blob)
   imageCache.set(id, dataUrl)
   useStore.getState().addInputImage({ id, dataUrl })
-}
-
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
 }

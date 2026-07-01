@@ -14,6 +14,7 @@ import com.tripcanvas.backend.util.Ids;
 import com.tripcanvas.backend.util.JsonUtils;
 import com.tripcanvas.backend.util.Times;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -47,21 +48,22 @@ public class DatabaseBootstrap implements ApplicationRunner {
     }
 
     private void ensureSchemaColumns() {
-        addColumnIfMissing("prompt_templates", "resolution_options_json", "resolution_options_json TEXT NOT NULL DEFAULT '[]'");
-        addColumnIfMissing("tasks", "template_resolution_id", "template_resolution_id TEXT");
-        addColumnIfMissing("tasks", "template_resolution_name", "template_resolution_name TEXT");
+        addColumnIfMissing("prompt_templates", "resolution_options_json", "resolution_options_json LONGTEXT NOT NULL");
+        addColumnIfMissing("tasks", "template_resolution_id", "template_resolution_id VARCHAR(64)");
+        addColumnIfMissing("tasks", "template_resolution_name", "template_resolution_name VARCHAR(255)");
     }
 
     private void addColumnIfMissing(String table, String column, String definition) {
         boolean exists = false;
+        // 用 INFORMATION_SCHEMA 判断列是否存在（MySQL 兼容；旧 SQLite 实现用 PRAGMA，MySQL 不支持）。
+        String sql = "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+            + "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?";
         try (Connection connection = dataSource.getConnection();
-             Statement statement = connection.createStatement();
-             ResultSet rows = statement.executeQuery("PRAGMA table_info(" + table + ")")) {
-            while (rows.next()) {
-                if (column.equalsIgnoreCase(rows.getString("name"))) {
-                    exists = true;
-                    break;
-                }
+             PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, table);
+            ps.setString(2, column);
+            try (ResultSet rows = ps.executeQuery()) {
+                exists = rows.next();
             }
         } catch (SQLException e) {
             throw new IllegalStateException("读取数据库结构失败", e);

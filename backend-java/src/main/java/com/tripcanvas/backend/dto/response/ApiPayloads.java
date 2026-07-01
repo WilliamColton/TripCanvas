@@ -28,6 +28,9 @@ public final class ApiPayloads {
     public record ImageUpload(String id, String url, long createdAt, String source) {
     }
 
+    public record ImageUrl(String url, String mime, long size) {
+    }
+
     public record GenerateSubmit(String taskId, String status) {
     }
 

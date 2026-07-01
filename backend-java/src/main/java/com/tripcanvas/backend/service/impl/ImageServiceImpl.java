@@ -7,6 +7,7 @@ import com.tripcanvas.backend.entity.ImageEntity;
 import com.tripcanvas.backend.mapper.ImageMapper;
 import com.tripcanvas.backend.mapper.PromptTemplateMapper;
 import com.tripcanvas.backend.service.ImageService;
+import com.tripcanvas.backend.storage.ImageStorageService;
 import com.tripcanvas.backend.structmapper.ImageDtoMapper;
 import com.tripcanvas.backend.util.CryptoUtils;
 import com.tripcanvas.backend.util.FileStorageUtils;
@@ -34,6 +35,7 @@ public class ImageServiceImpl implements ImageService {
     private final PromptTemplateMapper templateMapper;
     private final TripCanvasProperties properties;
     private final ImageDtoMapper imageDtoMapper;
+    private final ImageStorageService storage;
 
     @Override
     public ImageResponse saveImageBuffer(String userId, byte[] bytes, String mime, String source) {
@@ -42,39 +44,34 @@ public class ImageServiceImpl implements ImageService {
             FlexQuery.and(FlexQuery.eq("user_id", userId), "sha256 = ?", sha256)
         );
         if (existing != null) {
-            return toResponse(existing);
+            return toResponseWithUrl(existing);
         }
         String id = Ids.generate();
         String ext = MIME_EXT.getOrDefault(mime, "png");
-        Path absPath;
-        try {
-            Path dir = FileStorageUtils.ensureUserUploadDir(properties.uploadDir(), userId);
-            absPath = dir.resolve(id + "." + ext);
-            Files.write(absPath, bytes);
-        } catch (IOException e) {
-            throw ApiException.internal("图片保存失败");
-        }
+        String key = buildKey(userId, id, ext);
+        ImageStorageService.StoredObject stored = storage.save(key, bytes, mime);
+
         long now = Times.nowMillis();
-        String relPath = FileStorageUtils.toUploadRelativePath(properties.uploadDir(), absPath);
+        boolean isCos = storage.type().equals("cos");
         ImageEntity image = new ImageEntity()
             .setId(id)
             .setUserId(userId)
-            .setFilePath(relPath)
+            .setFilePath(stored.key())
             .setMime(mime)
             .setSize((long) bytes.length)
             .setSha256(sha256)
             .setSource(parseSource(source))
-            .setCreatedAt(now);
+            .setCreatedAt(now)
+            .setStorageType(storage.type())
+            .setStorageKey(stored.key())
+            .setPublicUrl(stored.url());
         try {
             imageMapper.insert(image);
         } catch (Exception e) {
-            try {
-                Files.deleteIfExists(absPath);
-            } catch (IOException ignored) {
-            }
+            storage.delete(stored.key());
             throw ApiException.internal("图片保存失败");
         }
-        return toResponse(image);
+        return toResponseWithUrl(image);
     }
 
     @Override
@@ -85,7 +82,7 @@ public class ImageServiceImpl implements ImageService {
         if (image == null) {
             throw ApiException.notFound("图片不存在");
         }
-        return new ImageFile(toResponse(image), resolve(image.getFilePath()));
+        return toImageFile(image);
     }
 
     @Override
@@ -98,7 +95,18 @@ public class ImageServiceImpl implements ImageService {
         if (image == null) {
             throw ApiException.notFound("图片不存在");
         }
-        return new ImageFile(toResponse(image), resolve(image.getFilePath()));
+        return toImageFile(image);
+    }
+
+    @Override
+    public byte[] readBytesForUser(String userId, String imageId) {
+        ImageEntity image = imageMapper.selectOneByQuery(
+            FlexQuery.and(FlexQuery.eq("id", imageId), "user_id = ?", userId)
+        );
+        if (image == null) {
+            throw ApiException.notFound("图片不存在");
+        }
+        return readBytesOf(image);
     }
 
     @Override
@@ -110,10 +118,7 @@ public class ImageServiceImpl implements ImageService {
             return;
         }
         imageMapper.deleteById(imageId);
-        try {
-            Files.deleteIfExists(resolve(image.getFilePath()));
-        } catch (Exception ignored) {
-        }
+        storage.delete(storageKeyOf(image));
     }
 
     @Override
@@ -125,7 +130,54 @@ public class ImageServiceImpl implements ImageService {
         };
     }
 
-    private Path resolve(String relPath) {
+    // ===== 私有工具 =====
+
+    private String buildKey(String userId, String id, String ext) {
+        String prefix = properties.storage().keyPrefix();
+        if (properties.storage().isCos()) {
+            return prefix + userId + "/" + id + "." + ext;
+        }
+        // 本地模式：相对 uploadDir 的路径（与原有 ./upload/{userId}/{id}.{ext} 一致）。
+        return userId + "/" + id + "." + ext;
+    }
+
+    private ImageFile toImageFile(ImageEntity image) {
+        if (isCos(image)) {
+            return new ImageFile(toResponseWithUrl(image), storage.accessUrl(storageKeyOf(image)), null);
+        }
+        return new ImageFile(toResponseWithUrl(image), accessUrlLocal(image), resolveLocalPath(image.getFilePath()));
+    }
+
+    private byte[] readBytesOf(ImageEntity image) {
+        if (isCos(image)) {
+            return storage.readBytes(storageKeyOf(image));
+        }
+        try {
+            return Files.readAllBytes(resolveLocalPath(image.getFilePath()));
+        } catch (IOException e) {
+            throw ApiException.notFound("图片不存在");
+        }
+    }
+
+    private String storageKeyOf(ImageEntity image) {
+        return image.getStorageKey() != null && !image.getStorageKey().isBlank()
+            ? image.getStorageKey()
+            : image.getFilePath();
+    }
+
+    private boolean isCos(ImageEntity image) {
+        return image != null && "cos".equalsIgnoreCase(image.getStorageType());
+    }
+
+    private String accessUrlLocal(ImageEntity image) {
+        // 本地模式相对回退 URL，由控制器直接服务字节，无需直链。
+        return "/api/images/" + image.getId();
+    }
+
+    private Path resolveLocalPath(String relPath) {
+        if (relPath == null || relPath.isBlank()) {
+            throw ApiException.notFound("图片不存在");
+        }
         try {
             return FileStorageUtils.resolveUploadPath(properties.uploadDir(), relPath);
         } catch (IOException e) {
@@ -133,7 +185,33 @@ public class ImageServiceImpl implements ImageService {
         }
     }
 
-    private ImageResponse toResponse(ImageEntity image) {
-        return imageDtoMapper.toResponse(image);
+    /** 生成对外访问 URL：COS 用 storage.accessUrl（实时预签名/公开直链），本地留空。 */
+    private String resolveAccessUrl(ImageEntity image) {
+        if (isCos(image)) {
+            return storage.accessUrl(storageKeyOf(image));
+        }
+        return null;
+    }
+
+    private ImageResponse toResponseWithUrl(ImageEntity image) {
+        ImageResponse base = imageDtoMapper.toResponse(image);
+        // COS 模式实时生成访问 URL（预签名可能过期，公开直链稳定）；
+        // 公开前缀模式下优先复用已存的稳定 publicUrl，避免重复拼接。
+        String url = null;
+        if (isCos(image)) {
+            String stored = image.getPublicUrl();
+            url = (stored != null && !stored.isBlank() && isPublicBaseUrlMode())
+                ? stored
+                : resolveAccessUrl(image);
+        }
+        return new ImageResponse(
+            base.id(), base.userId(), base.filePath(), base.mime(), base.size(),
+            base.sha256(), base.source(), base.createdAt(), url
+        );
+    }
+
+    private boolean isPublicBaseUrlMode() {
+        String base = properties.storage().publicBaseUrl();
+        return base != null && !base.isBlank();
     }
 }

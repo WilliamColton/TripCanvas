@@ -215,16 +215,25 @@ export async function uploadImage(dataUrl: string, source: NonNullable<StoredIma
   const formData = new FormData()
   formData.append('image', blob, `image.${blob.type.split('/')[1] || 'png'}`)
   formData.append('source', source)
-  const result = await request<{ id: string; createdAt: number; source: StoredImage['source'] }>('/api/images', {
+  const result = await request<{ id: string; url?: string; createdAt: number; source: StoredImage['source'] }>('/api/images', {
     method: 'POST',
     body: formData,
   })
-  return { id: result.id, dataUrl: getImageUrl(result.id), createdAt: result.createdAt, source: result.source }
+  if (!result.url || !result.url.startsWith('http')) {
+    throw new Error('后端未返回 COS 图片直链')
+  }
+  return { id: result.id, dataUrl: result.url, createdAt: result.createdAt, source: result.source }
 }
 
-export function getImageUrl(id: string): string {
-  const token = encodeURIComponent(getBackendToken())
-  return buildUrl(`/api/images/${encodeURIComponent(id)}?token=${token}`)
+/**
+ * 按 id 解析图片对外访问直链：COS 模式返回预签名 URL（<img> 直连 COS）。
+ */
+export async function resolveImageUrl(id: string): Promise<string> {
+  const result = await request<{ url: string }>(`/api/images/${encodeURIComponent(id)}/url`)
+  if (!result.url || !result.url.startsWith('http')) {
+    throw new Error('后端未返回 COS 图片直链')
+  }
+  return result.url
 }
 
 export function getTemplatePreviewImageUrl(id: string): string {

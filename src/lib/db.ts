@@ -57,6 +57,18 @@ export async function hashDataUrl(dataUrl: string): Promise<string> {
     .join('')
 }
 
+/** 对文件字节做 SHA-256，用作输入图片在会话内的稳定 id（不再经 dataURL 中转）。 */
+export async function hashFile(file: Blob): Promise<string> {
+  const buffer = await file.arrayBuffer()
+  if (!globalThis.crypto?.subtle) {
+    return hashDataUrlFallback(String(buffer.byteLength))
+  }
+  const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
 function hashDataUrlFallback(dataUrl: string): string {
   let h1 = 0x811c9dc5
   let h2 = 0x01000193

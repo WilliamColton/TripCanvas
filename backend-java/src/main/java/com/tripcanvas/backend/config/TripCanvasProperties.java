@@ -9,7 +9,8 @@ public record TripCanvasProperties(
     Path dataDir,
     Path uploadDir,
     Path configFile,
-    ThreadPools threadPools
+    ThreadPools threadPools,
+    Storage storage
 ) {
     private static final ThreadPools DEFAULT_THREAD_POOLS = new ThreadPools(
         new ThreadPool(4, 4, 200, 60),
@@ -19,6 +20,10 @@ public record TripCanvasProperties(
     @Override
     public ThreadPools threadPools() {
         return threadPools == null ? DEFAULT_THREAD_POOLS : threadPools.withDefaults(DEFAULT_THREAD_POOLS);
+    }
+
+    public Storage storage() {
+        return storage == null ? Storage.defaultLocal() : storage;
     }
 
     public record ThreadPools(
@@ -46,6 +51,41 @@ public record TripCanvasProperties(
                 queueCapacity == null ? defaults.queueCapacity() : queueCapacity,
                 keepAliveSeconds == null ? defaults.keepAliveSeconds() : keepAliveSeconds
             );
+        }
+    }
+
+    /**
+     * 图片存储配置。
+     * type=local 走本地文件系统（兼容原有 ./upload 目录）；type=cos 走腾讯云 COS。
+     */
+    public record Storage(
+        String type,
+        String secretId,
+        String secretKey,
+        String region,
+        String bucket,
+        String keyPrefix,
+        Long signedUrlTtlSeconds,
+        String publicBaseUrl
+    ) {
+        public static Storage defaultLocal() {
+            return new Storage("local", null, null, null, null, "images/", 900L, null);
+        }
+
+        public String type() {
+            return type == null || type.isBlank() ? "local" : type.toLowerCase();
+        }
+
+        public boolean isCos() {
+            return "cos".equals(type());
+        }
+
+        public Long signedUrlTtlSeconds() {
+            return signedUrlTtlSeconds == null || signedUrlTtlSeconds <= 0 ? 900L : signedUrlTtlSeconds;
+        }
+
+        public String keyPrefix() {
+            return keyPrefix == null || keyPrefix.isBlank() ? "images/" : keyPrefix;
         }
     }
 }
