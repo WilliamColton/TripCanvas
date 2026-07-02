@@ -1,0 +1,36 @@
+{
+  "port": 3001,
+  "jwtSecret": "change-me",
+  "adminApikey": "change-me-admin-apikey",
+  "model": "gpt-image-2",
+  "apiMode": "images",
+  "timeout": 6000,
+  "codexCli": false,
+  "apiEndpointsAuto": [
+    {
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "sk-replace-with-your-openai-api-key",
+      "maxConcurrency": 0,
+      "priority": 0,
+      "costPerImageX10000": 0,
+      "cost1KX10000": 0,
+      "cost2KX10000": 0,
+      "cost4KX10000": 0
+    }
+  ],
+  "apiEndpoints1K": [],
+  "apiEndpoints2K": [],
+  "apiEndpoints4K": [],
+  "salePriceX10000": 0,
+  "salePricingMode": "unified",
+  "salePrice1KX10000": 0,
+  "salePrice2KX10000": 0,
+  "salePrice4KX10000": 0,
+  "inviteInviterReward": 0,
+  "inviteInviteeReward": 0,
+  "inviteDefaultQuota": 0,
+  "inviteEnabled": true,
+  "resendApiKey": "change-me-resend",
+  "resendFrom": "精品旅图 <noreply@jingpinlutu.com>",
+  "emailVerificationTtlSeconds": 600
+}
