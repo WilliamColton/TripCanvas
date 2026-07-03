@@ -49,8 +49,40 @@ public class DatabaseBootstrap implements ApplicationRunner {
 
     private void ensureSchemaColumns() {
         addColumnIfMissing("prompt_templates", "resolution_options_json", "resolution_options_json LONGTEXT NOT NULL");
+        addColumnIfMissing("prompt_templates", "credit_cost", "credit_cost INT NOT NULL DEFAULT 1");
         addColumnIfMissing("tasks", "template_resolution_id", "template_resolution_id VARCHAR(64)");
         addColumnIfMissing("tasks", "template_resolution_name", "template_resolution_name VARCHAR(255)");
+        addColumnIfMissing("tasks", "credit_cost", "credit_cost INT NOT NULL DEFAULT 1");
+        addColumnIfMissing("users", "email", "email VARCHAR(255)");
+        addColumnIfMissing("users", "email_verified_at", "email_verified_at BIGINT");
+        addColumnIfMissing("users", "email_verification_code", "email_verification_code VARCHAR(16)");
+        addColumnIfMissing("users", "email_verification_expires_at", "email_verification_expires_at BIGINT");
+        ensureEmailUniqueIndex();
+    }
+
+    private void ensureEmailUniqueIndex() {
+        boolean exists = false;
+        String sql = "SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS "
+            + "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND INDEX_NAME = 'uk_users_email'";
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement ps = connection.prepareStatement(sql)) {
+            try (ResultSet rows = ps.executeQuery()) {
+                exists = rows.next();
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("读取数据库索引失败", e);
+        }
+        if (exists) {
+            return;
+        }
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            statement.execute("ALTER TABLE users ADD UNIQUE KEY uk_users_email (email)");
+        } catch (SQLException e) {
+            // MySQL 的 UNIQUE 约束允许多个 NULL，旧用户 email 为 NULL 不冲突；忽略已存在的情况。
+            log.warn("添加 users.email 唯一索引失败（可能已存在）：{}", e.getMessage());
+        }
+        log.info("已补齐数据库索引 users.uk_users_email");
     }
 
     private void addColumnIfMissing(String table, String column, String definition) {
@@ -144,6 +176,7 @@ public class DatabaseBootstrap implements ApplicationRunner {
                 .setResolutionOptionsJson("[]")
                 .setPromptBody(template.promptBody())
                 .setNegativePrompt("")
+                .setCreditCost(1)
                 .setAssemblyMode("sections")
                 .setStatus("published")
                 .setSortOrder(template.sortOrder())
@@ -202,7 +235,7 @@ public class DatabaseBootstrap implements ApplicationRunner {
     }
 
     private PromptTemplateFieldResponse field(String key, String label, boolean required, String placeholder, int maxLength) {
-        return new PromptTemplateFieldResponse(key, label, "short_text", required, placeholder, null, null, null, maxLength);
+        return new PromptTemplateFieldResponse(key, label, "short_text", required, placeholder, null, null, null, null, maxLength);
     }
 
     private record DefaultTemplate(

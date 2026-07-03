@@ -12,6 +12,8 @@ public record AuthUserResponse(
     int quota,
     boolean unlimitedQuota,
     int usedCount,
-    Boolean needsMigration
+    Boolean needsMigration,
+    String email,
+    Boolean emailVerified
 ) {
 }

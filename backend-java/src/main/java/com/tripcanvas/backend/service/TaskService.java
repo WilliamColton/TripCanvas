@@ -12,7 +12,7 @@ public interface TaskService {
 
     void upsertTask(String userId, TaskRecordResponse task);
 
-    QuotaCheckResult checkQuotaAndCreateTask(String userId, TaskRecordResponse task, int n);
+    QuotaCheckResult checkQuotaAndCreateTask(String userId, TaskRecordResponse task, int creditCost);
 
     void updateFavorite(String userId, String taskId, boolean favorite);
 
@@ -20,7 +20,7 @@ public interface TaskService {
 
     void clearTasks(String userId);
 
-    int countPendingImages(String userId);
+    int countPendingCredits(String userId);
 
     static int normalizeTaskN(Integer n) {
         if (n == null || n < 1) {

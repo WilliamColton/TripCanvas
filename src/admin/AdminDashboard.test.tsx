@@ -47,7 +47,7 @@ describe('quota and endpoint validation regressions', () => {
     expect(source).toContain('handleRefreshCurrentTab')
     expect(source).toContain("else if (tab === 'config') loadPricingConfig()")
     expect(source).toContain("else if (tab === 'announcement') loadAnnouncement()")
-    expect(source).toContain("else if (tab === 'invites') { loadInviteConfig(); loadInviteRows() }")
+    expect(source).toContain("else if (tab === 'invites') { loadInviteConfig(); loadInviteRows(); loadEmailSuffixes() }")
     expect(source).not.toContain('loadUsers(); loadCodes(); loadFeedbacks(); loadChangelogs()')
   })
 

@@ -7,7 +7,6 @@ import com.tripcanvas.backend.dto.response.AuthUserResponse;
 import com.tripcanvas.backend.dto.response.TaskParamsResponse;
 import com.tripcanvas.backend.dto.response.TaskRecordResponse;
 import com.tripcanvas.backend.service.AppConfigService;
-import com.tripcanvas.backend.service.AuthService;
 import com.tripcanvas.backend.service.GenerationService;
 import com.tripcanvas.backend.service.GenerationWorkerService;
 import com.tripcanvas.backend.service.PromptTemplateService;
@@ -24,11 +23,11 @@ public class GenerationServiceImpl implements GenerationService {
     private final TaskService taskService;
     private final PromptTemplateService templateService;
     private final AppConfigService appConfigService;
-    private final AuthService authService;
     private final GenerationWorkerService generationWorkerService;
 
     @Override
-    public SubmitResult submit(String userId, GenerateRequest request, boolean edit) {
+    public SubmitResult submit(AuthUserResponse user, GenerateRequest request, boolean edit) {
+        String userId = user.id();
         if (request == null) {
             throw ApiException.badRequest("请求参数无效");
         }
@@ -46,6 +45,7 @@ public class GenerationServiceImpl implements GenerationService {
         String assembledPrompt = prompt;
         String templateTitle = "";
         Integer templateVersion = 0;
+        int templateCreditCost = 1;
         String templateResolutionId = null;
         String templateResolutionName = null;
         TemplateInputs templateInputs = request.templateInputs();
@@ -62,6 +62,7 @@ public class GenerationServiceImpl implements GenerationService {
             assembledPrompt = assembly.assembledPrompt();
             templateTitle = assembly.template().title();
             templateVersion = assembly.template().version();
+            templateCreditCost = assembly.template().creditCost();
             templateInputs = assembly.inputs();
             PromptTemplateService.ResolvedResolutionOption resolution = templateService.resolveResolution(userId, request.templateId(), request.templateResolutionId());
             params = withSize(params, resolution == null ? ImageSizeUtils.POOL_AUTO : resolution.size());
@@ -74,6 +75,7 @@ public class GenerationServiceImpl implements GenerationService {
             throw ApiException.badRequest("缺少 prompt");
         }
         List<String> inputIds = request.inputImageIds() == null ? List.of() : request.inputImageIds();
+        int totalCreditCost = Math.max(1, params.n()) * Math.max(1, templateCreditCost);
         Long now = Times.nowMillis();
         TaskRecordResponse task = new TaskRecordResponse(
             request.taskId(),
@@ -84,6 +86,7 @@ public class GenerationServiceImpl implements GenerationService {
             templateResolutionName,
             templateTitle,
             templateVersion,
+            totalCreditCost,
             templateInputs,
             "template".equals(promptMode) ? request.additionalPrompt() : prompt,
             assembledPrompt,
@@ -104,11 +107,10 @@ public class GenerationServiceImpl implements GenerationService {
             appConfigService.apiMode(),
             Boolean.TRUE.equals(request.codexCli())
         );
-        TaskService.QuotaCheckResult result = taskService.checkQuotaAndCreateTask(userId, task, params.n());
+        TaskService.QuotaCheckResult result = taskService.checkQuotaAndCreateTask(userId, task, totalCreditCost);
         if (!result.allowed()) {
             throw ApiException.forbidden(result.error());
         }
-        AuthUserResponse user = authService.findAuthUserById(userId, false);
         generationWorkerService.enqueue(userId, user.label(), task);
         return new SubmitResult(task.id(), "queued");
     }

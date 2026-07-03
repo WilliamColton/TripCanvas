@@ -10,10 +10,12 @@ import com.tripcanvas.backend.dto.response.ImageResponse;
 import com.tripcanvas.backend.dto.response.TaskParamsResponse;
 import com.tripcanvas.backend.dto.response.TaskRecordResponse;
 import com.tripcanvas.backend.service.AppConfigService;
+import com.tripcanvas.backend.service.AuthService;
 import com.tripcanvas.backend.service.BillingService;
 import com.tripcanvas.backend.service.GenerationWorkerService;
 import com.tripcanvas.backend.service.ImageGenerationClient;
 import com.tripcanvas.backend.service.ImageService;
+import com.tripcanvas.backend.service.TaskProgressBroadcaster;
 import com.tripcanvas.backend.service.TaskService;
 import com.tripcanvas.backend.util.DataUrlUtils;
 import com.tripcanvas.backend.util.ImageSizeUtils;
@@ -40,6 +42,8 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
     private final ImageGenerationClient imageGenerationClient;
     private final BillingService billingService;
     private final AppConfigService appConfigService;
+    private final AuthService authService;
+    private final TaskProgressBroadcaster broadcaster;
     private final AsyncTaskExecutor executor;
     private final Map<String, ActiveTask> activeTasks = new ConcurrentHashMap<>();
 
@@ -49,6 +53,8 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
         ImageGenerationClient imageGenerationClient,
         BillingService billingService,
         AppConfigService appConfigService,
+        AuthService authService,
+        TaskProgressBroadcaster broadcaster,
         @Qualifier(ExecutorConfig.GENERATION_TASK_EXECUTOR) AsyncTaskExecutor executor
     ) {
         this.taskService = taskService;
@@ -56,6 +62,8 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
         this.imageGenerationClient = imageGenerationClient;
         this.billingService = billingService;
         this.appConfigService = appConfigService;
+        this.authService = authService;
+        this.broadcaster = broadcaster;
         this.executor = executor;
     }
 
@@ -118,6 +126,7 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
                 taskRef[0] = runningTask;
                 try {
                     taskService.upsertTask(userId, runningTask);
+                    broadcaster.publish(taskId, runningTask);
                 } catch (Exception e) {
                     log.error("更新任务状态失败 userId={} taskId={}", userId, taskId, e);
                 }
@@ -158,11 +167,14 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
                 return;
             }
             try {
-                billingService.finalizeSuccessfulTask(userId, done, buildBillingInput(done.id(), userId, userLabel, route.requestTier(), saved), outputIds.size());
+                billingService.finalizeSuccessfulTask(userId, done, buildBillingInput(done.id(), userId, userLabel, route.requestTier(), saved), taskCreditCost(done));
             } catch (Exception e) {
                 deleteSavedImages(userId, saved);
                 throw e;
             }
+            broadcaster.publish(done.id(), done);
+            // finalize 在事务内已改 used_count，事务已提交（成功返回）；evict 让该用户的 findAuthUserById 重新读新值
+            authService.evictUserCache(userId);
         } catch (Exception e) {
             if (Thread.currentThread().isInterrupted()) {
                 log.warn("任务已取消 userId={} taskId={}", userId, initialTask.id());
@@ -180,9 +192,8 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
         }
         List<ImageFileInput> result = new ArrayList<>();
         for (String id : ids) {
-            byte[] bytes = imageService.readBytesForUser(userId, id);
-            String mime = imageService.readImageFileForUser(userId, id).image().mime();
-            result.add(new ImageFileInput(bytes, mime));
+            ImageService.ImageBytes ib = imageService.readBytesAndMimeForUser(userId, id);
+            result.add(new ImageFileInput(ib.bytes(), ib.mime()));
         }
         return result;
     }
@@ -191,9 +202,8 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
         if (maskImageId == null || maskImageId.isBlank()) {
             return null;
         }
-        byte[] bytes = imageService.readBytesForUser(userId, maskImageId);
-        String mime = imageService.readImageFileForUser(userId, maskImageId).image().mime();
-        return new ImageFileInput(bytes, mime);
+        ImageService.ImageBytes ib = imageService.readBytesAndMimeForUser(userId, maskImageId);
+        return new ImageFileInput(ib.bytes(), ib.mime());
     }
 
     private List<GeneratedImage> finalizeAttribution(List<GeneratedImage> images, String requestTier) {
@@ -283,6 +293,7 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
         long now = Times.nowMillis();
         TaskRecordResponse failed = copy(task, null, null, null, null, "error", error, null, now, now - task.createdAt(), null, null);
         taskService.upsertTask(userId, failed);
+        broadcaster.publish(task.id(), failed);
     }
 
     private String generationPrompt(TaskRecordResponse task) {
@@ -330,6 +341,7 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
             source.templateResolutionName(),
             source.templateTitle(),
             source.templateVersion(),
+            source.creditCost(),
             source.templateInputs(),
             source.userPrompt(),
             source.assembledPrompt(),
@@ -350,6 +362,13 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
             apiMode == null ? source.apiMode() : apiMode,
             codexCli == null ? source.codexCli() : codexCli
         );
+    }
+
+    private int taskCreditCost(TaskRecordResponse task) {
+        if (task.creditCost() != null && task.creditCost() > 0) {
+            return task.creditCost();
+        }
+        return TaskService.normalizeTaskN(task.params() == null ? null : task.params().n());
     }
 
     private record ActiveTask(String userId, Future<?> future) {

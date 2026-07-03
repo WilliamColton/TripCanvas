@@ -18,6 +18,7 @@ public record PromptTemplateFieldResponse(
     @Size(max = 500, message = "字段帮助文本最多 500 个字符") String help,
     Object defaultValue,
     List<@Size(max = 200, message = "字段选项最多 200 个字符") String> options,
+    Boolean allowCustom,
     @Min(value = 0, message = "字段长度限制无效") Integer maxLength
 ) {
 }

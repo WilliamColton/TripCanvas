@@ -16,6 +16,8 @@ public interface AuthDtoMapper {
     @Mapping(target = "unlimitedQuota", expression = "java(nonZero(entity.getUnlimitedQuota()))")
     @Mapping(target = "usedCount", expression = "java(nullToZero(entity.getUsedCount()))")
     @Mapping(target = "needsMigration", expression = "java(entity.getPasswordHash() == null ? Boolean.TRUE : null)")
+    @Mapping(target = "email", expression = "java(nullToEmpty(entity.getEmail()))")
+    @Mapping(target = "emailVerified", expression = "java(entity.getEmailVerifiedAt() != null ? Boolean.TRUE : null)")
     AuthUserResponse toAuthUser(UserEntity entity, int imageCount);
 
     @Mapping(target = "username", expression = "java(nullToEmpty(entity.getUsername()))")

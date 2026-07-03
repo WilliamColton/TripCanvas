@@ -75,4 +75,9 @@ public final class AdminRequests {
         Boolean inviteEnabled
     ) {
     }
+
+    public record EmailConfigRequest(
+        List<@Size(max = 64, message = "单个后缀过长") String> allowedSuffixes
+    ) {
+    }
 }

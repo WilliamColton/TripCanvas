@@ -10,6 +10,7 @@ backend-go/config.json
 backend-java/config.json
 backend-java/config.local.json
 backend-java/*.local.json
+backend-java/src/main/resources/application.yml
 backend-java/src/main/resources/application-local.yml
 backend-java/src/main/resources/application-*.local.yml
 

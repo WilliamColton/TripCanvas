@@ -204,6 +204,16 @@ public class AdminController {
         return ApiPayloads.InviteConfig.from(config);
     }
 
+    @GetMapping("/email-config")
+    public AppConfigService.EmailConfig emailConfig() {
+        return appConfigService.emailConfig();
+    }
+
+    @PutMapping("/email-config")
+    public AppConfigService.EmailConfig updateEmailConfig(@Valid @RequestBody AdminRequests.EmailConfigRequest body) {
+        return appConfigService.setEmailConfig(body);
+    }
+
     @GetMapping("/invites")
     public InvitesPayload invites() {
         return new InvitesPayload(authService.listInvites());

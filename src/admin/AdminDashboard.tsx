@@ -11,6 +11,7 @@ import {
   adminGetBillingEndpointBreakdown, adminGetBillingUserBreakdown,
   adminGetImageSizeBreakdown, adminGetEndpointSizeBreakdown, adminClearBillingAnalytics,
   adminResetPassword, adminGetInviteConfig, adminUpdateInviteConfig, adminListInvites,
+  adminGetEmailConfig, adminUpdateEmailConfig,
   adminToggleUnlimited,
   adminListTemplates, adminCreateTemplate, adminUpdateTemplate, adminDeleteTemplate, adminToggleTemplateStatus, adminPreviewTemplate, adminUploadTemplatePreviewImage,
   type AdminUser, type RedemptionCode, type ApiEndpoint,
@@ -23,7 +24,7 @@ import { useStore } from '../store'
 import { Toaster } from '../components/ui/sonner'
 import type { BugFeedback, BugFeedbackStatus, ChangelogEntry, ChangelogEntryPayload, PromptTemplate, PromptTemplateField, PromptTemplatePayload, PromptTemplateResolutionOption, ThemeMode } from '../types'
 import FieldSchemaEditor from '../components/FieldSchemaEditor'
-import { getTemplatePreviewImageUrl } from '../lib/backendApi'
+import TemplatePreviewImg from '../components/TemplatePreviewImg'
 import Select from '../components/Select'
 import { Input } from '../components/ui/input'
 import { Textarea } from '../components/ui/textarea'
@@ -121,6 +122,7 @@ export default function AdminDashboard({ onLogout }: Props) {
   const [templatePreviewImageDataUrl, setTemplatePreviewImageDataUrl] = useState('')
   const [templatePreviewUploading, setTemplatePreviewUploading] = useState(false)
   const [templateNegativePrompt, setTemplateNegativePrompt] = useState('')
+  const [templateCreditCost, setTemplateCreditCost] = useState('1')
   const [templateSortOrder, setTemplateSortOrder] = useState('0')
   const [templateFields, setTemplateFields] = useState<PromptTemplateField[]>([])
   const [templateResolutionOptions, setTemplateResolutionOptions] = useState<PromptTemplateResolutionOption[]>([])
@@ -137,6 +139,10 @@ export default function AdminDashboard({ onLogout }: Props) {
   const [inviteConfigSaving, setInviteConfigSaving] = useState(false)
   const [inviteRows, setInviteRows] = useState<Array<{username:string;inviteCode:string;usageCount:number}>>([])
   const [inviteRowsLoading, setInviteRowsLoading] = useState(false)
+  const [emailSuffixes, setEmailSuffixes] = useState<string[]>([])
+  const [emailSuffixInput, setEmailSuffixInput] = useState('')
+  const [emailSuffixLoading, setEmailSuffixLoading] = useState(false)
+  const [emailSuffixSaving, setEmailSuffixSaving] = useState(false)
   const [resetPasswordModal, setResetPasswordModal] = useState<{userId:string;label:string} | null>(null)
   const [resetQuotaConfirm, setResetQuotaConfirm] = useState<string | null>(null)
   const [resetPasswordValue, setResetPasswordValue] = useState('')
@@ -338,6 +344,49 @@ export default function AdminDashboard({ onLogout }: Props) {
     }
   }, [toast])
 
+  const loadEmailSuffixes = useCallback(async () => {
+    setEmailSuffixLoading(true)
+    try {
+      const cfg = await adminGetEmailConfig()
+      setEmailSuffixes(cfg.allowedSuffixes || [])
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), 'error')
+    } finally {
+      setEmailSuffixLoading(false)
+    }
+  }, [toast])
+
+  const handleSaveEmailSuffixes = async () => {
+    setEmailSuffixSaving(true)
+    try {
+      const res = await adminUpdateEmailConfig(emailSuffixes)
+      setEmailSuffixes(res.allowedSuffixes || [])
+      setSettings({ allowedEmailSuffixes: res.allowedSuffixes || [] })
+      toast('配置已保存', 'success')
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), 'error')
+    } finally {
+      setEmailSuffixSaving(false)
+    }
+  }
+
+  const addEmailSuffix = () => {
+    const raw = emailSuffixInput.trim()
+    if (!raw) return
+    let s = raw.toLowerCase()
+    if (!s.startsWith('@')) s = '@' + s
+    if (emailSuffixes.includes(s)) {
+      toast('该后缀已存在', 'error')
+      return
+    }
+    setEmailSuffixes([...emailSuffixes, s])
+    setEmailSuffixInput('')
+  }
+
+  const removeEmailSuffix = (s: string) => {
+    setEmailSuffixes(emailSuffixes.filter((x) => x !== s))
+  }
+
   // ─── Analytics loaders ───
   const loadAnalyticsSummary = useCallback(async (range: AnalyticsRange = analyticsRange) => {
     setSummaryLoading(true)
@@ -473,8 +522,8 @@ export default function AdminDashboard({ onLogout }: Props) {
     else if (tab === 'feedback') loadFeedbacks()
     else if (tab === 'changelog') loadChangelogs()
     else if (tab === 'templates') loadTemplates()
-    else if (tab === 'invites') { loadInviteConfig(); loadInviteRows() }
-  }, [tab, loadUsers, loadCodes, loadPricingConfig, loadAnnouncement, loadFeedbacks, loadChangelogs, loadTemplates, loadInviteConfig, loadInviteRows, refreshAnalytics, analyticsRange])
+    else if (tab === 'invites') { loadInviteConfig(); loadInviteRows(); loadEmailSuffixes() }
+  }, [tab, loadUsers, loadCodes, loadPricingConfig, loadAnnouncement, loadFeedbacks, loadChangelogs, loadTemplates, loadInviteConfig, loadInviteRows, loadEmailSuffixes, refreshAnalytics, analyticsRange])
 
   const handleRefreshCurrentTab = () => {
     if (tab === 'users') loadUsers()
@@ -485,7 +534,7 @@ export default function AdminDashboard({ onLogout }: Props) {
     else if (tab === 'feedback') loadFeedbacks()
     else if (tab === 'changelog') loadChangelogs()
     else if (tab === 'templates') loadTemplates()
-    else if (tab === 'invites') { loadInviteConfig(); loadInviteRows() }
+    else if (tab === 'invites') { loadInviteConfig(); loadInviteRows(); loadEmailSuffixes() }
   }
 
   const handleQuotaConfirm = () => {
@@ -1042,6 +1091,7 @@ export default function AdminDashboard({ onLogout }: Props) {
     setTemplatePreviewImageId('')
     setTemplatePreviewImageDataUrl('')
     setTemplateNegativePrompt('')
+    setTemplateCreditCost('1')
     setTemplateSortOrder('0')
     setTemplateFields([])
     setTemplateResolutionOptions([])
@@ -1057,6 +1107,7 @@ export default function AdminDashboard({ onLogout }: Props) {
     setTemplatePreviewImageId(template.previewImageId || '')
     setTemplatePreviewImageDataUrl('')
     setTemplateNegativePrompt(template.negativePrompt || '')
+    setTemplateCreditCost(String(Math.max(1, template.creditCost || 1)))
     setTemplateSortOrder(String(template.sortOrder || 0))
     setTemplateFields(template.fieldSchema || [])
     setTemplateResolutionOptions((template.resolutionOptions || []).map(option => ({
@@ -1089,6 +1140,12 @@ export default function AdminDashboard({ onLogout }: Props) {
       })
     }
 
+    const creditCost = Number(templateCreditCost)
+    if (!Number.isInteger(creditCost) || creditCost < 1 || creditCost > 1000) {
+      toast('每张图积分消耗必须是 1 到 1000 的整数', 'error')
+      return null
+    }
+
     return {
       title: templateTitle.trim(),
       category: templateCategory.trim(),
@@ -1096,6 +1153,7 @@ export default function AdminDashboard({ onLogout }: Props) {
       promptBody: templatePromptBody.trim(),
       previewImageId: templatePreviewImageId,
       negativePrompt: templateNegativePrompt.trim(),
+      creditCost,
       fieldSchema: templateFields,
       resolutionOptions,
       status: 'draft',
@@ -2095,7 +2153,7 @@ export default function AdminDashboard({ onLogout }: Props) {
                             />
                           </label>
                           <div className="h-16 w-20 flex-shrink-0 overflow-hidden rounded-xl bg-gradient-to-br from-blue-50 via-cyan-50 to-amber-50 dark:from-blue-500/10 dark:via-cyan-500/10 dark:to-amber-500/10">
-                            {template.previewImageId && <img src={getTemplatePreviewImageUrl(template.previewImageId)} alt="" className="h-full w-full object-cover" />}
+                            {template.previewImageId && <TemplatePreviewImg id={template.previewImageId} className="h-full w-full object-cover" />}
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
@@ -2134,6 +2192,7 @@ export default function AdminDashboard({ onLogout }: Props) {
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <label className="text-xs text-gray-500">排序<Input value={templateSortOrder} onChange={(e) => setTemplateSortOrder(e.target.value)} className="mt-1" type="number" /></label>
+                <label className="text-xs text-gray-500">每张图积分消耗<Input value={templateCreditCost} onChange={(e) => setTemplateCreditCost(e.target.value.replace(/\D/g, ''))} className="mt-1" type="number" min={1} max={1000} /></label>
               </div>
               <label className="mt-3 block text-xs text-gray-500">描述<Textarea value={templateDescription} onChange={(e) => setTemplateDescription(e.target.value)} className="mt-1 min-h-[4rem]" placeholder="用户可见的模板说明" /></label>
               <label className="mt-3 block text-xs text-gray-500">隐藏提示词模板<Textarea value={templatePromptBody} onChange={(e) => setTemplatePromptBody(e.target.value)} className="mt-1 min-h-[8rem] font-mono text-xs" placeholder="生成一张图片，风格是 {风格}，时间是 {季节}" /></label>
@@ -2142,7 +2201,9 @@ export default function AdminDashboard({ onLogout }: Props) {
                 <div className="mb-2 text-xs text-gray-500">预览图</div>
                 <div className="flex items-center gap-3">
                   <div className="h-20 w-28 overflow-hidden rounded-xl bg-gradient-to-br from-blue-50 via-cyan-50 to-amber-50 dark:from-blue-500/10 dark:via-cyan-500/10 dark:to-amber-500/10">
-                    {templatePreviewImageId && <img src={templatePreviewImageDataUrl || getTemplatePreviewImageUrl(templatePreviewImageId)} alt="" className="h-full w-full object-cover" />}
+                    {templatePreviewImageId && (templatePreviewImageDataUrl
+                      ? <img src={templatePreviewImageDataUrl} alt="" className="h-full w-full object-cover" />
+                      : <TemplatePreviewImg id={templatePreviewImageId} className="h-full w-full object-cover" />)}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <label className="cursor-pointer rounded-xl bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700">
@@ -2352,6 +2413,48 @@ export default function AdminDashboard({ onLogout }: Props) {
                     {inviteConfigSaving ? '保存中...' : '保存配置'}
                   </button>
                 </div>
+              )}
+            </div>
+
+            {/* 邮箱注册后缀配置区 */}
+            <div className="rounded-2xl border border-gray-200/70 dark:border-white/[0.08] bg-white/80 dark:bg-gray-900/80 p-5">
+              <h3 className="text-sm font-medium text-gray-800 dark:text-gray-100 mb-2">邮箱注册后缀</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                配置允许注册的邮箱后缀（如 @gmail.com）。留空表示允许任意邮箱；配置后注册页将显示邮箱名输入框 + 后缀下拉选择，仅允许所选后缀注册。
+              </p>
+              {emailSuffixLoading ? (<div className="py-8 text-center text-gray-500">加载中...</div>) : (
+                <>
+                  <div className="flex flex-wrap gap-2 mb-4">
+                    {emailSuffixes.length === 0 && (
+                      <span className="text-sm text-gray-400">暂未配置，允许任意邮箱注册</span>
+                    )}
+                    {emailSuffixes.map((s) => (
+                      <span key={s} className="inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-white/[0.06] px-3 py-1 text-sm text-gray-700 dark:text-gray-200">
+                        {s}
+                        <button type="button" onClick={() => removeEmailSuffix(s)} className="text-gray-400 hover:text-red-500">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Input
+                      type="text"
+                      placeholder="例如 @gmail.com"
+                      value={emailSuffixInput}
+                      onChange={(e) => setEmailSuffixInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addEmailSuffix() } }}
+                      className="w-64"
+                    />
+                    <Button variant="outline" onClick={addEmailSuffix} disabled={!emailSuffixInput.trim()}>
+                      <Plus className="h-4 w-4 mr-1" />添加
+                    </Button>
+                    <Button variant="default" onClick={handleSaveEmailSuffixes} disabled={emailSuffixSaving}
+                      className="bg-green-600 hover:bg-green-700">
+                      {emailSuffixSaving ? '保存中...' : '保存配置'}
+                    </Button>
+                  </div>
+                </>
               )}
             </div>
 

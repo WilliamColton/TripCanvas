@@ -21,6 +21,7 @@ public interface TaskDtoMapper {
     @Mapping(target = "templateResolutionName", expression = "java(emptyToNull(task.templateResolutionName()))")
     @Mapping(target = "templateTitleSnapshot", expression = "java(emptyToNull(task.templateTitle()))")
     @Mapping(target = "templateVersion", expression = "java(task.templateVersion() == null ? 0 : task.templateVersion())")
+    @Mapping(target = "creditCost", expression = "java(task.creditCost() == null || task.creditCost() < 1 ? 1 : task.creditCost())")
     @Mapping(target = "templateInputsJson", expression = "java(task.templateInputs() == null ? null : JsonUtils.stringify(task.templateInputs().values()))")
     @Mapping(target = "userPrompt", expression = "java(emptyToNull(task.userPrompt()))")
     @Mapping(target = "assembledPrompt", expression = "java(emptyToNull(task.assembledPrompt()))")

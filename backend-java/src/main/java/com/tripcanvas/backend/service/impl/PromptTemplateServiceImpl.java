@@ -1,8 +1,12 @@
 package com.tripcanvas.backend.service.impl;
 
+import com.alicp.jetcache.Cache;
+import com.alicp.jetcache.CacheManager;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.mybatisflex.core.query.QueryWrapper;
+import com.tripcanvas.backend.cache.CacheNames;
 import com.tripcanvas.backend.common.exception.ApiException;
+import com.tripcanvas.backend.config.JetCacheConfigs;
 import com.tripcanvas.backend.dto.TemplateInputs;
 import com.tripcanvas.backend.dto.request.TemplateRequests;
 import com.tripcanvas.backend.dto.response.PromptTemplateFieldResponse;
@@ -16,6 +20,7 @@ import com.tripcanvas.backend.util.Ids;
 import com.tripcanvas.backend.util.ImageSizeUtils;
 import com.tripcanvas.backend.util.JsonUtils;
 import com.tripcanvas.backend.util.Times;
+import jakarta.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -24,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
@@ -35,21 +41,56 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
     private static final Pattern PLACEHOLDER = Pattern.compile("\\{([^{}]+)}");
 
     private final PromptTemplateMapper mapper;
+    private final CacheManager cacheManager;
+
+    private Cache<String, List<PromptTemplateResponse>> templateUserListCache;
+    private Cache<String, PromptTemplateResponse> templateUserDetailCache;
+    private Cache<String, List<PromptTemplateResponse>> templateAdminListCache;
+
+    // 模板写操作后递增 epoch，使所有用户级缓存 key 整体失效（无法枚举所有 userId）。
+    private final AtomicLong templateCacheEpoch = new AtomicLong();
+
+    @PostConstruct
+    private void initCaches() {
+        templateUserListCache = cacheManager.getOrCreateCache(
+            JetCacheConfigs.local(CacheNames.TEMPLATE_USER_LIST, CacheNames.LOCAL_LIMIT)
+        );
+        templateUserDetailCache = cacheManager.getOrCreateCache(
+            JetCacheConfigs.local(CacheNames.TEMPLATE_USER_DETAIL, CacheNames.LOCAL_LIMIT)
+        );
+        templateAdminListCache = cacheManager.getOrCreateCache(
+            JetCacheConfigs.local(CacheNames.TEMPLATE_ADMIN_LIST, CacheNames.SINGLE_ENTRY_LIMIT)
+        );
+    }
 
     @Override
     public List<PromptTemplateResponse> listForUser(String userId) {
+        String key = templateCacheKey("user:list", userId);
+        List<PromptTemplateResponse> cached = templateUserListCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
         QueryWrapper query = FlexQuery.orderBy(
             FlexQuery.where("(source = ? AND status = ? AND visibility = ?) OR (source = ? AND owner_user_id = ? AND status != ?)",
                 "admin", "published", "public", "user", userId, "archived"),
             "sort_order ASC, updated_at DESC"
         );
-        return mapper.selectListByQuery(query).stream().map(t -> toResponse(t, shouldExpose(userId, t, false), false)).toList();
+        List<PromptTemplateResponse> response = mapper.selectListByQuery(query).stream().map(t -> toResponse(t, shouldExpose(userId, t, false), false)).toList();
+        templateUserListCache.put(key, response);
+        return response;
     }
 
     @Override
     public PromptTemplateResponse getForUser(String userId, String templateId) {
+        String key = templateCacheKey("user:detail", userId, templateId);
+        PromptTemplateResponse cached = templateUserDetailCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
         PromptTemplateEntity entity = findTemplateForUser(userId, templateId);
-        return toResponse(entity, shouldExpose(userId, entity, false), false);
+        PromptTemplateResponse response = toResponse(entity, shouldExpose(userId, entity, false), false);
+        templateUserDetailCache.put(key, response);
+        return response;
     }
 
     @Override
@@ -64,6 +105,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             .setVersion(1)
             .setCreatedAt(now);
         mapper.insert(entity);
+        invalidateTemplateCache();
         return toResponse(entity, true, false);
     }
 
@@ -78,6 +120,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         apply(entity, input);
         entity.setVersion(nullToZero(entity.getVersion()) + 1);
         mapper.update(entity);
+        invalidateTemplateCache();
         return toResponse(entity, true, false);
     }
 
@@ -87,13 +130,21 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         if (affected == 0) {
             throw ApiException.badRequest("模板不存在");
         }
+        invalidateTemplateCache();
     }
 
     @Override
     public List<PromptTemplateResponse> listForAdmin() {
-        return mapper.selectListByQuery(FlexQuery.orderBy(QueryWrapper.create(), "sort_order ASC, updated_at DESC")).stream()
+        String key = templateCacheKey("admin:list", CacheNames.KEY_TEMPLATE_ADMIN_ALL);
+        List<PromptTemplateResponse> cached = templateAdminListCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        List<PromptTemplateResponse> response = mapper.selectListByQuery(FlexQuery.orderBy(QueryWrapper.create(), "sort_order ASC, updated_at DESC")).stream()
             .map(t -> toResponse(t, true, true))
             .toList();
+        templateAdminListCache.put(key, response);
+        return response;
     }
 
     @Override
@@ -107,6 +158,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             .setVersion(1)
             .setCreatedAt(now);
         mapper.insert(entity);
+        invalidateTemplateCache();
         return toResponse(entity, true, true);
     }
 
@@ -121,6 +173,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         apply(entity, input);
         entity.setVersion(nullToZero(entity.getVersion()) + 1);
         mapper.update(entity);
+        invalidateTemplateCache();
         return toResponse(entity, true, true);
     }
 
@@ -130,6 +183,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         if (affected == 0) {
             throw ApiException.badRequest("模板不存在");
         }
+        invalidateTemplateCache();
     }
 
     @Override
@@ -142,6 +196,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             entity.setPublishedAt(now);
         }
         mapper.update(entity);
+        invalidateTemplateCache();
         return toResponse(entity, true, true);
     }
 
@@ -272,6 +327,18 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         return entity;
     }
 
+    private String templateCacheKey(String scope, String... parts) {
+        StringBuilder sb = new StringBuilder().append(templateCacheEpoch.get()).append(':').append(scope);
+        for (String part : parts) {
+            sb.append(':').append(part);
+        }
+        return sb.toString();
+    }
+
+    private void invalidateTemplateCache() {
+        templateCacheEpoch.incrementAndGet();
+    }
+
     private NormalizedTemplate normalize(TemplateRequests.PromptTemplateRequest request, boolean admin, String visibility, String status) {
         String title = trim(request.title());
         String category = trim(request.category());
@@ -288,6 +355,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         String normalizedStatus = normalizeStatus(status, admin);
         String normalizedVisibility = normalizeVisibility(visibility, admin);
         String assemblyMode = normalizeAssemblyMode(request.assemblyMode());
+        int creditCost = normalizeCreditCost(request.creditCost());
         validateFields(promptBody, request.fieldSchema());
         List<PromptTemplateResolutionOptionResponse> resolutionOptions = admin
             ? normalizeResolutionOptions(request.resolutionOptions())
@@ -301,6 +369,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             emptyToNull(request.previewImageId()),
             promptBody,
             trim(request.negativePrompt()),
+            creditCost,
             assemblyMode,
             normalizedStatus,
             normalizedVisibility,
@@ -318,6 +387,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             .setPreviewImageId(input.previewImageId())
             .setPromptBody(input.promptBody())
             .setNegativePrompt(input.negativePrompt())
+            .setCreditCost(input.creditCost())
             .setAssemblyMode(input.assemblyMode())
             .setStatus(input.status())
             .setSortOrder(input.sortOrder())
@@ -336,6 +406,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             .setPreviewImageId(input.previewImageId())
             .setPromptBody(input.promptBody())
             .setNegativePrompt(input.negativePrompt())
+            .setCreditCost(input.creditCost())
             .setAssemblyMode(input.assemblyMode())
             .setStatus(input.status())
             .setSortOrder(input.sortOrder())
@@ -463,8 +534,10 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         if (field.options() == null || field.options().isEmpty()) {
             return;
         }
+        boolean allowCustom = "select".equals(normalizeFieldType(field.type()))
+            && (Boolean.TRUE.equals(field.allowCustom()) || field.options().contains("自定义"));
         for (String value : values) {
-            if (!value.isEmpty() && !field.options().contains(value)) {
+            if (!value.isEmpty() && !field.options().contains(value) && !allowCustom) {
                 throw ApiException.badRequest("%s 选项无效：%s".formatted(fieldLabel(field), value));
             }
         }
@@ -503,6 +576,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             nullToEmpty(entity.getPreviewImageId()),
             exposePromptBody ? entity.getPromptBody() : null,
             exposePromptBody ? entity.getNegativePrompt() : null,
+            normalizeCreditCost(entity.getCreditCost()),
             entity.getAssemblyMode(),
             entity.getStatus(),
             nullToZero(entity.getSortOrder()),
@@ -629,6 +703,16 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         return value;
     }
 
+    private int normalizeCreditCost(Integer value) {
+        if (value == null) {
+            return 1;
+        }
+        if (value < 1 || value > 1000) {
+            throw ApiException.badRequest("积分消耗必须是 1 到 1000 的整数");
+        }
+        return value;
+    }
+
     private boolean isValidFieldType(String type) {
         return List.of("short_text", "long_text", "select", "multi_select", "number", "boolean").contains(normalizeFieldType(type));
     }
@@ -706,6 +790,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         String previewImageId,
         String promptBody,
         String negativePrompt,
+        int creditCost,
         String assemblyMode,
         String status,
         String visibility,

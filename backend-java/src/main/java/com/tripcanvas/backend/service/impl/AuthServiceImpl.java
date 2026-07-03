@@ -1,6 +1,11 @@
 package com.tripcanvas.backend.service.impl;
 
+import com.alicp.jetcache.Cache;
+import com.alicp.jetcache.CacheManager;
+import com.alicp.jetcache.anno.CacheType;
+import com.alicp.jetcache.template.QuickConfig;
 import com.mybatisflex.core.query.QueryWrapper;
+import com.tripcanvas.backend.cache.CacheNames;
 import com.tripcanvas.backend.common.exception.ApiException;
 import com.tripcanvas.backend.dto.response.AdminUserResponse;
 import com.tripcanvas.backend.dto.response.AuthUserResponse;
@@ -14,15 +19,21 @@ import com.tripcanvas.backend.mapper.UserMapper;
 import com.tripcanvas.backend.security.JwtService;
 import com.tripcanvas.backend.service.AppConfigService;
 import com.tripcanvas.backend.service.AuthService;
+import com.tripcanvas.backend.service.VerificationRateLimiter;
 import com.tripcanvas.backend.structmapper.AuthDtoMapper;
 import com.tripcanvas.backend.util.FlexQuery;
 import com.tripcanvas.backend.util.Ids;
 import com.tripcanvas.backend.util.Times;
+import jakarta.annotation.PostConstruct;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -33,6 +44,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class AuthServiceImpl implements AuthService {
     private static final String CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private static final SecureRandom RANDOM = new SecureRandom();
+    private static final long AUTH_USER_CACHE_TTL_SECONDS = 15L;
 
     private final UserMapper userMapper;
     private final RedemptionCodeMapper codeMapper;
@@ -40,7 +52,26 @@ public class AuthServiceImpl implements AuthService {
     private final JwtService jwtService;
     private final AppConfigService appConfigService;
     private final AuthDtoMapper authDtoMapper;
+    private final ResendMailService resendMailService;
+    private final VerificationRateLimiter verificationRateLimiter;
+    private final CacheManager cacheManager;
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
+
+    // findAuthUserById(withImageCount=false) 缓存：JwtAuthenticationFilter 每个受保护请求都查一次。
+    // TTL 15s 兜底；所有写路径主动 evict，变更即时生效。
+    private Cache<String, AuthUserResponse> authUserCache;
+
+    @PostConstruct
+    private void initCaches() {
+        authUserCache = cacheManager.getOrCreateCache(
+            QuickConfig.newBuilder(CacheNames.AUTH_USER)
+                .cacheType(CacheType.LOCAL)
+                .localLimit(CacheNames.LOCAL_LIMIT)
+                .expire(Duration.ofSeconds(AUTH_USER_CACHE_TTL_SECONDS))
+                .keyConvertor(Function.identity())
+                .build()
+        );
+    }
 
     @Override
     @Transactional
@@ -56,6 +87,7 @@ public class AuthServiceImpl implements AuthService {
             }
             loginUser.setLastLoginAt(now);
             userMapper.update(loginUser);
+            evictUserCache(loginUser.getId());
         } else {
             loginUser = new UserEntity()
                 .setId(Ids.generate())
@@ -78,15 +110,22 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public AuthResult loginWithPassword(String username, String password) {
-        UserEntity user = userMapper.selectOneByQuery(FlexQuery.eq("username", username));
+        String login = username == null ? "" : username.trim();
+        UserEntity user = login.contains("@")
+            ? userMapper.selectOneByQuery(FlexQuery.eq("email", login.toLowerCase(Locale.ROOT)))
+            : userMapper.selectOneByQuery(FlexQuery.eq("username", login));
         if (user == null || user.getPasswordHash() == null || !passwordEncoder.matches(nullToEmpty(password), user.getPasswordHash())) {
             throw ApiException.unauthorized("用户名或密码错误");
         }
         if ("disabled".equals(user.getStatus())) {
             throw ApiException.unauthorized("账号已被禁用");
         }
+        if ("pending_email".equals(user.getStatus()) || (user.getEmail() != null && user.getEmailVerifiedAt() == null)) {
+            throw ApiException.badRequest("邮箱尚未验证，请先完成验证");
+        }
         user.setLastLoginAt(Times.nowMillis());
         userMapper.update(user);
+        evictUserCache(user.getId());
         return new AuthResult(jwtService.signToken(user.getId(), user.getRole()), toAuthUser(user, false), false);
     }
 
@@ -134,8 +173,131 @@ public class AuthServiceImpl implements AuthService {
         if (inviter != null && appConfigService.inviteConfig().inviterReward() > 0) {
             inviter.setQuota(nullToZero(inviter.getQuota()) + appConfigService.inviteConfig().inviterReward());
             userMapper.update(inviter);
+            evictUserCache(inviter.getId());
         }
         return new AuthResult(jwtService.signToken(userId, "user"), toAuthUser(user, false), false);
+    }
+
+    @Override
+    @Transactional
+    public void registerWithEmail(String email, String username, String password, String inviteCode) {
+        validateUsername(username);
+        validatePassword(password);
+        String normalizedEmail = email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
+        if (normalizedEmail.isEmpty()) {
+            throw ApiException.badRequest("请输入邮箱");
+        }
+        if (userMapper.selectOneByQuery(FlexQuery.eq("username", username)) != null) {
+            throw ApiException.badRequest("用户名已被使用");
+        }
+        if (userMapper.selectOneByQuery(FlexQuery.eq("email", normalizedEmail)) != null) {
+            throw ApiException.badRequest("邮箱已被使用");
+        }
+        List<String> allowedSuffixes = appConfigService.emailConfig().allowedSuffixes();
+        if (allowedSuffixes != null && !allowedSuffixes.isEmpty()) {
+            boolean suffixMatched = false;
+            for (String suffix : allowedSuffixes) {
+                if (suffix != null && normalizedEmail.endsWith(suffix.toLowerCase(Locale.ROOT))) {
+                    suffixMatched = true;
+                    break;
+                }
+            }
+            if (!suffixMatched) {
+                throw ApiException.badRequest("该邮箱后缀暂不支持注册");
+            }
+        }
+        String normalizedInviteCode = inviteCode == null ? "" : inviteCode.trim();
+        if (!appConfigService.inviteConfig().inviteEnabled() && !normalizedInviteCode.isEmpty()) {
+            throw ApiException.badRequest("邀请功能已关闭");
+        }
+        UserEntity inviter = null;
+        if (!normalizedInviteCode.isEmpty()) {
+            inviter = userMapper.selectOneByQuery(FlexQuery.eq("invite_code", normalizedInviteCode));
+            if (inviter == null) {
+                throw ApiException.badRequest("邀请码无效");
+            }
+        }
+        int quota = appConfigService.inviteConfig().defaultQuota();
+        if (inviter != null) {
+            quota += appConfigService.inviteConfig().inviteeReward();
+        }
+        long now = Times.nowMillis();
+        int ttlSeconds = appConfigService.mailConfig().verificationTtlSeconds();
+        String userId = Ids.generate();
+        String code = generateCode(6);
+        UserEntity user = new UserEntity()
+            .setId(userId)
+            .setLabel(userId.substring(0, Math.min(8, userId.length())))
+            .setUsername(username)
+            .setPasswordHash(passwordEncoder.encode(password))
+            .setRole("user")
+            .setStatus("pending_email")
+            .setEmail(normalizedEmail)
+            .setEmailVerificationCode(code)
+            .setEmailVerificationExpiresAt(now + ttlSeconds * 1000L)
+            .setQuota(quota)
+            .setUnlimitedQuota(0)
+            .setUsedCount(0)
+            .setCreatedAt(now)
+            .setLastLoginAt(now)
+            .setInvitedBy(normalizedInviteCode.isEmpty() ? null : normalizedInviteCode);
+        userMapper.insert(user);
+        verificationRateLimiter.assertAndRecordResend(normalizedEmail);
+        resendMailService.sendVerificationCode(normalizedEmail, code);
+    }
+
+    @Override
+    @Transactional
+    public AuthResult verifyEmail(String email, String code) {
+        String normalizedEmail = email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
+        verificationRateLimiter.assertCanVerify(normalizedEmail);
+        UserEntity user = userMapper.selectOneByQuery(FlexQuery.eq("email", normalizedEmail));
+        long now = Times.nowMillis();
+        if (user == null
+            || !"pending_email".equals(user.getStatus())
+            || user.getEmailVerificationCode() == null
+            || !user.getEmailVerificationCode().equals(code)
+            || user.getEmailVerificationExpiresAt() == null
+            || user.getEmailVerificationExpiresAt() < now) {
+            verificationRateLimiter.recordVerifyFailure(normalizedEmail);
+            throw ApiException.badRequest("验证码无效或已过期");
+        }
+        user.setEmailVerifiedAt(now)
+            .setStatus("active")
+            .setEmailVerificationCode(null)
+            .setEmailVerificationExpiresAt(null)
+            .setLastLoginAt(now);
+        userMapper.update(user);
+        verificationRateLimiter.clear(normalizedEmail);
+        evictUserCache(user.getId());
+        if (user.getInvitedBy() != null && appConfigService.inviteConfig().inviterReward() > 0) {
+            UserEntity inviter = userMapper.selectOneByQuery(FlexQuery.eq("invite_code", user.getInvitedBy()));
+            if (inviter != null) {
+                inviter.setQuota(nullToZero(inviter.getQuota()) + appConfigService.inviteConfig().inviterReward());
+                userMapper.update(inviter);
+                evictUserCache(inviter.getId());
+            }
+        }
+        return new AuthResult(jwtService.signToken(user.getId(), user.getRole()), toAuthUser(user, false), false);
+    }
+
+    @Override
+    public void resendVerifyCode(String email) {
+        String normalizedEmail = email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
+        verificationRateLimiter.assertAndRecordResend(normalizedEmail);
+        UserEntity user = userMapper.selectOneByQuery(FlexQuery.eq("email", normalizedEmail));
+        if (user == null || !"pending_email".equals(user.getStatus())) {
+            // 静默成功，避免泄露邮箱是否已注册
+            return;
+        }
+        long now = Times.nowMillis();
+        int ttlSeconds = appConfigService.mailConfig().verificationTtlSeconds();
+        String code = generateCode(6);
+        user.setEmailVerificationCode(code)
+            .setEmailVerificationExpiresAt(now + ttlSeconds * 1000L);
+        userMapper.update(user);
+        evictUserCache(user.getId());
+        resendMailService.sendVerificationCode(normalizedEmail, code);
     }
 
     @Override
@@ -149,6 +311,7 @@ public class AuthServiceImpl implements AuthService {
         UserEntity user = selectUserById(userId);
         user.setUsername(username).setPasswordHash(passwordEncoder.encode(password));
         userMapper.update(user);
+        evictUserCache(userId);
         return toAuthUser(user, false);
     }
 
@@ -164,15 +327,33 @@ public class AuthServiceImpl implements AuthService {
         codeMapper.update(rc);
         user.setQuota(nullToZero(user.getQuota()) + nullToZero(rc.getQuota()));
         userMapper.update(user);
+        evictUserCache(userId);
     }
 
     @Override
     public AuthUserResponse findAuthUserById(String id, boolean withImageCount) {
+        if (!withImageCount) {
+            AuthUserResponse cached = authUserCache.get(id);
+            if (cached != null) {
+                return cached;
+            }
+        }
         UserEntity user = selectUserById(id);
         if ("disabled".equals(user.getStatus())) {
             throw ApiException.unauthorized("登录状态无效");
         }
-        return toAuthUser(user, withImageCount);
+        AuthUserResponse response = toAuthUser(user, withImageCount);
+        if (!withImageCount) {
+            authUserCache.put(id, response);
+        }
+        return response;
+    }
+
+    @Override
+    public void evictUserCache(String userId) {
+        if (userId != null) {
+            authUserCache.remove(userId);
+        }
     }
 
     @Override
@@ -185,6 +366,7 @@ public class AuthServiceImpl implements AuthService {
         UserEntity user = selectUserById(userId);
         user.setUsername(username);
         userMapper.update(user);
+        evictUserCache(userId);
     }
 
     @Override
@@ -199,6 +381,7 @@ public class AuthServiceImpl implements AuthService {
         }
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         userMapper.update(user);
+        evictUserCache(userId);
     }
 
     @Override
@@ -214,6 +397,7 @@ public class AuthServiceImpl implements AuthService {
         }
         user.setInviteCode(trimmed).setInviteCodeSetAt(Times.nowMillis());
         userMapper.update(user);
+        evictUserCache(userId);
     }
 
     @Override
@@ -243,11 +427,13 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public void updateUserQuota(String userId, int delta, boolean resetUsedCount) {
         UserEntity user = selectUserById(userId);
-        user.setQuota(Math.max(0, nullToZero(user.getQuota()) + delta));
+        int newQuota = Math.max(0, nullToZero(user.getQuota()) + delta);
         if (resetUsedCount) {
-            user.setUsedCount(0);
+            userMapper.updateQuotaAndResetUsedCount(userId, newQuota);
+        } else {
+            userMapper.updateQuota(userId, newQuota);
         }
-        userMapper.update(user);
+        evictUserCache(userId);
     }
 
     @Override
@@ -255,9 +441,9 @@ public class AuthServiceImpl implements AuthService {
         if (quota < 0) {
             throw ApiException.badRequest("配额不能小于 0");
         }
-        UserEntity user = selectUserById(userId);
-        user.setQuota(quota);
-        userMapper.update(user);
+        selectUserById(userId);
+        userMapper.updateQuota(userId, quota);
+        evictUserCache(userId);
     }
 
     @Override
@@ -268,6 +454,7 @@ public class AuthServiceImpl implements AuthService {
         UserEntity user = selectUserById(userId);
         user.setStatus(status);
         userMapper.update(user);
+        evictUserCache(userId);
     }
 
     @Override
@@ -275,6 +462,7 @@ public class AuthServiceImpl implements AuthService {
         UserEntity user = selectUserById(userId);
         user.setUnlimitedQuota(unlimited ? 1 : 0);
         userMapper.update(user);
+        evictUserCache(userId);
     }
 
     @Override
@@ -283,6 +471,7 @@ public class AuthServiceImpl implements AuthService {
         if (affected == 0) {
             throw ApiException.notFound("用户不存在");
         }
+        evictUserCache(userId);
     }
 
     @Override
@@ -290,7 +479,11 @@ public class AuthServiceImpl implements AuthService {
         if (ids == null || ids.isEmpty()) {
             return 0;
         }
-        return userMapper.deleteByQuery(FlexQuery.in(QueryWrapper.create(), "id", ids));
+        long affected = userMapper.deleteByQuery(FlexQuery.in(QueryWrapper.create(), "id", ids));
+        for (String id : ids) {
+            evictUserCache(id);
+        }
+        return affected;
     }
 
     @Override
@@ -322,9 +515,9 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public void incrementUsedCount(String userId, int count) {
-        UserEntity user = selectUserById(userId);
-        user.setUsedCount(nullToZero(user.getUsedCount()) + count);
-        userMapper.update(user);
+        // 原子自增，避免并发完成时读-改-写丢失更新
+        userMapper.incrementUsedCount(userId, count);
+        evictUserCache(userId);
     }
 
     @Override
@@ -333,14 +526,18 @@ public class AuthServiceImpl implements AuthService {
         UserEntity user = selectUserById(userId);
         user.setPasswordHash(passwordEncoder.encode(password));
         userMapper.update(user);
+        evictUserCache(userId);
     }
 
     @Override
     public List<InviteResponses.InviteRow> listInvites() {
         List<UserEntity> owners = userMapper.selectListByQuery(FlexQuery.where("invite_code IS NOT NULL"));
-        List<InviteResponses.InviteRow> rows = new ArrayList<>();
+        // 一次聚合查询取代 N+1：每个 owner 单独 count
+        Map<String, Long> counts = userMapper.selectInvitedCounts().stream()
+            .collect(Collectors.toMap(m -> String.valueOf(m.get("invitedBy")), m -> ((Number) m.get("cnt")).longValue()));
+        List<InviteResponses.InviteRow> rows = new ArrayList<>(owners.size());
         for (UserEntity owner : owners) {
-            long count = userMapper.selectCountByQuery(FlexQuery.eq("invited_by", owner.getInviteCode()));
+            long count = counts.getOrDefault(owner.getInviteCode(), 0L);
             rows.add(new InviteResponses.InviteRow(nullToEmpty(owner.getUsername()), owner.getInviteCode(), (int) count));
         }
         return rows;

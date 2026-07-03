@@ -28,6 +28,12 @@ public interface ImageStorageService {
     /** 删除存储对象。 */
     void delete(String key);
 
+    /**
+     * 生成预签名 PUT URL，供浏览器直传（绕过后端中转）。
+     * COS 模式返回带时效的 PUT 预签名 URL；本地模式不支持直传，返回 null（前端回退 multipart）。
+     */
+    String presignPut(String key, String mime, long size);
+
     record StoredObject(String key, String url) {
     }
 }

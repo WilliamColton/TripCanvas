@@ -25,7 +25,7 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     public AnalyticsRange parseRange(String value, Instant now) {
         String label = value == null || value.isBlank() ? "7d" : value.trim();
         if (!List.of("today", "7d", "30d", "all").contains(label)) {
-            throw ApiException.badRequest("unsupported range: %q".formatted(label));
+            throw ApiException.badRequest("unsupported range: %s".formatted(label));
         }
         Instant nowUtc = now == null ? Instant.now() : now;
         long to = nowUtc.toEpochMilli();
@@ -55,7 +55,7 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     @Override
     public List<AnalyticsResponses.BillingTrendPoint> trend(AnalyticsRange range) {
         return jdbcTemplate.query(
-            "SELECT strftime('%Y-%m-%d', created_at / 1000, 'unixepoch') AS bucket, COALESCE(SUM(revenue_x10000),0), COALESCE(SUM(cost_x10000),0), COALESCE(SUM(profit_x10000),0), COALESCE(SUM(success_image_count),0) FROM billing_records WHERE created_at >= ? AND created_at <= ? GROUP BY bucket ORDER BY bucket ASC",
+            "SELECT DATE_FORMAT(FROM_UNIXTIME(created_at / 1000), '%Y-%m-%d') AS bucket, COALESCE(SUM(revenue_x10000),0), COALESCE(SUM(cost_x10000),0), COALESCE(SUM(profit_x10000),0), COALESCE(SUM(success_image_count),0) FROM billing_records WHERE created_at >= ? AND created_at <= ? GROUP BY bucket ORDER BY bucket ASC",
             (rs, rowNum) -> new AnalyticsResponses.BillingTrendPoint(rs.getString(1), rs.getLong(2), rs.getLong(3), rs.getLong(4), rs.getInt(5)),
             range.from(), range.to()
         );

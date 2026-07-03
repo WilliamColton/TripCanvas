@@ -6,6 +6,8 @@ import com.tripcanvas.backend.dto.response.ApiPayloads;
 import com.tripcanvas.backend.security.AuthContext;
 import com.tripcanvas.backend.service.ImageService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import java.io.IOException;
 import java.net.URI;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +19,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -33,6 +36,38 @@ public class ImageController {
         String mime = file.getContentType() == null || file.getContentType().isBlank() ? "image/png" : file.getContentType();
         ImageResponse image = imageService.saveImageBuffer(AuthContext.requireUserId(request), file.getBytes(), mime, source);
         // url：COS 模式为预签名/公开直链（前端 <img> 直连）；本地模式回退 /api/images/{id}。
+        String url = image.url() != null && !image.url().isBlank() ? image.url() : "/api/images/" + image.id();
+        return new ApiPayloads.ImageUpload(image.id(), url, image.createdAt(), image.source());
+    }
+
+    /**
+     * 前端直传第一步：按 sha256 查重；命中则返回已存图片直链；否则签发 COS 预签名 PUT URL。
+     * 本地模式返回 fallback=true，前端回退 multipart POST /api/images。
+     */
+    @PostMapping("/prepare")
+    public PreparePayload prepare(HttpServletRequest request, @Valid @RequestBody PrepareRequest body) {
+        String userId = AuthContext.requireUserId(request);
+        long size = body.size() == null ? 0L : body.size();
+        ImageService.UploadPrepare r = imageService.prepareUpload(userId, body.sha256(), body.mime(), size, body.source());
+        if (r.deduplicated()) {
+            ImageResponse img = r.existing();
+            String url = img.url() != null && !img.url().isBlank() ? img.url() : "/api/images/" + img.id();
+            return new PreparePayload(true, false, img.id(), null, null, url, img.createdAt(), img.source());
+        }
+        if (r.fallback()) {
+            return new PreparePayload(false, true, null, null, null, null, 0L, null);
+        }
+        return new PreparePayload(false, false, r.id(), r.key(), r.uploadUrl(), null, 0L, null);
+    }
+
+    /**
+     * 前端直传第二步：浏览器 PUT 字节到 COS 后，登记 images 表记录并返回访问直链。
+     */
+    @PostMapping("/commit")
+    public ApiPayloads.ImageUpload commit(HttpServletRequest request, @Valid @RequestBody CommitRequest body) {
+        String userId = AuthContext.requireUserId(request);
+        long size = body.size() == null ? 0L : body.size();
+        ImageResponse image = imageService.commitUpload(userId, body.id(), body.key(), body.sha256(), body.mime(), size, body.source());
         String url = image.url() != null && !image.url().isBlank() ? image.url() : "/api/images/" + image.id();
         return new ApiPayloads.ImageUpload(image.id(), url, image.createdAt(), image.source());
     }
@@ -70,5 +105,30 @@ public class ImageController {
     public ApiResponse<Void> delete(HttpServletRequest request, @PathVariable String id) {
         imageService.deleteImageForUser(AuthContext.requireUserId(request), id);
         return ApiResponse.ok();
+    }
+
+    public record PrepareRequest(String sha256, String mime, Long size, String source) {
+    }
+
+    public record CommitRequest(
+        @NotBlank(message = "id 不能为空") String id,
+        @NotBlank(message = "key 不能为空") String key,
+        String sha256,
+        @NotBlank(message = "mime 不能为空") String mime,
+        Long size,
+        String source
+    ) {
+    }
+
+    public record PreparePayload(
+        boolean deduplicated,
+        boolean fallback,
+        String id,
+        String key,
+        String uploadUrl,
+        String url,
+        long createdAt,
+        String source
+    ) {
     }
 }

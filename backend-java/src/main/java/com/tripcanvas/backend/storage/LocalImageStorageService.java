@@ -63,6 +63,12 @@ public class LocalImageStorageService implements ImageStorageService {
         }
     }
 
+    @Override
+    public String presignPut(String key, String mime, long size) {
+        // 本地模式不支持浏览器直传，返回 null 让前端回退 multipart 上传。
+        return null;
+    }
+
     private Path resolveAbsPath(String key) throws IOException {
         return FileStorageUtils.resolveUploadPath(properties.uploadDir(), key);
     }

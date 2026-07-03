@@ -7,8 +7,14 @@ describe('Task 11 — RegisterModal component', () => {
     expect(registerModalSource).toContain('export default function RegisterModal')
   })
 
-  it('imports register, bootstrapBackendSession, useStore', () => {
-    expect(registerModalSource).toContain("import { register } from '../lib/backendApi'")
+  it('imports register, verifyEmail, resendVerifyCode from backendApi', () => {
+    expect(registerModalSource).toContain('register')
+    expect(registerModalSource).toContain('verifyEmail')
+    expect(registerModalSource).toContain('resendVerifyCode')
+    expect(registerModalSource).toContain("'../lib/backendApi'")
+  })
+
+  it('imports bootstrapBackendSession, useStore', () => {
     expect(registerModalSource).toContain("import { bootstrapBackendSession, useStore } from '../store'")
   })
 
@@ -18,10 +24,12 @@ describe('Task 11 — RegisterModal component', () => {
     expect(registerModalSource).toContain("import { Button } from './ui/button'")
   })
 
-  it('has three fields: inviteCode, username, password', () => {
+  it('has fields: inviteCode, email, username, password, code', () => {
     expect(registerModalSource).toContain('inviteCode')
+    expect(registerModalSource).toContain('email')
     expect(registerModalSource).toContain('username')
     expect(registerModalSource).toContain('password')
+    expect(registerModalSource).toContain('code')
   })
 
   it('invite code field has placeholder 选填，输入邀请码可获得额外配额', () => {
@@ -43,11 +51,15 @@ describe('Task 11 — RegisterModal component', () => {
     expect(registerModalSource).toMatch(/type=["']password["']/)
   })
 
-  it('calls register() on form submit', () => {
+  it('calls register() on step-1 submit', () => {
     expect(registerModalSource).toContain('register(')
   })
 
-  it('calls bootstrapBackendSession after successful register', () => {
+  it('calls verifyEmail() on step-2 submit', () => {
+    expect(registerModalSource).toContain('verifyEmail(')
+  })
+
+  it('calls bootstrapBackendSession after successful verify', () => {
     expect(registerModalSource).toContain('bootstrapBackendSession')
   })
 
@@ -57,6 +69,10 @@ describe('Task 11 — RegisterModal component', () => {
 
   it('has password length validation (>= 8 chars)', () => {
     expect(registerModalSource).toContain('密码至少需要 8 个字符')
+  })
+
+  it('has email format validation', () => {
+    expect(registerModalSource).toMatch(/EMAIL_RE/)
   })
 
   it('uses Dialog component from shadcn', () => {

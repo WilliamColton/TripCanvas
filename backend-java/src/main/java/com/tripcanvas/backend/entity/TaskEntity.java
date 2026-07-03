@@ -28,6 +28,8 @@ public class TaskEntity {
     private String templateTitleSnapshot;
     @Column("template_version")
     private Integer templateVersion;
+    @Column("credit_cost")
+    private Integer creditCost;
     @Column("template_inputs_json")
     private String templateInputsJson;
     @Column("user_prompt")

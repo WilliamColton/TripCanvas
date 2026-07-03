@@ -1,0 +1,66 @@
+# application.yml 配置模板（不含真实凭据，可安全提交）。
+# 用法：复制本文件为同目录 application.yml（该文件已在 .gitignore 中，不提交），
+# 修改其中的值即可。
+#
+#   cp src/main/resources/application.yml.example src/main/resources/application.yml
+#
+# 下方配置默认使用环境变量占位符（${VAR:默认值}）：
+#   - 本地开发：在 application.yml 里直接填真实值，或 export 对应环境变量；
+#   - 生产环境：通过环境变量 DB_* / COS_* 注入，无需把真实值写进文件。
+
+server:
+  port: 3001
+
+spring:
+  application:
+    name: tripcanvas-backend
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:tripcanvas}?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:your-local-mysql-password}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/migration/V1__init.sql,classpath:db/migration/V2__image_storage.sql
+      continue-on-error: true
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+mybatis-flex:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+tripcanvas:
+  root-dir: .
+  data-dir: ./data
+  upload-dir: ./upload
+  config-file: ./config.json
+  storage:
+    # local = 本地磁盘（./upload）；cos = 腾讯云 COS
+    type: ${COS_STORAGE_TYPE:local}
+    secret-id: ${COS_SECRET_ID:your-cos-secret-id}
+    secret-key: ${COS_SECRET_KEY:your-cos-secret-key}
+    region: ${COS_REGION:ap-guangzhou}
+    bucket: ${COS_BUCKET:your-cos-bucket}
+    key-prefix: images/
+    signed-url-ttl-seconds: ${COS_SIGNED_URL_TTL:604800}
+    public-base-url: ${COS_PUBLIC_BASE_URL:https://your-cos-public-base-url}
+  thread-pools:
+    generation-tasks:
+      core-size: 4
+      max-size: 4
+      queue-capacity: 200
+      keep-alive-seconds: 60
+    image-requests:
+      core-size: 20
+      max-size: 20
+      queue-capacity: 200
+      keep-alive-seconds: 60

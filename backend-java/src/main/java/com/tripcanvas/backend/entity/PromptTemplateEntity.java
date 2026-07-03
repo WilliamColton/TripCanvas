@@ -30,6 +30,8 @@ public class PromptTemplateEntity {
     private String promptBody;
     @Column("negative_prompt")
     private String negativePrompt;
+    @Column("credit_cost")
+    private Integer creditCost;
     @Column("assembly_mode")
     private String assemblyMode;
     private String status;

@@ -13,11 +13,20 @@ public interface AuthService {
 
     AuthResult register(String username, String password, String inviteCode);
 
+    void registerWithEmail(String email, String username, String password, String inviteCode);
+
+    AuthResult verifyEmail(String email, String code);
+
+    void resendVerifyCode(String email);
+
     AuthUserResponse migrateUser(String userId, String username, String password);
 
     void redeemForUser(String userId, String code);
 
     AuthUserResponse findAuthUserById(String id, boolean withImageCount);
+
+    /** 清除 findAuthUserById 的缓存（写路径/任务完成后调用，让下次读取最新值）。 */
+    void evictUserCache(String userId);
 
     void changeUsername(String userId, String username);
 

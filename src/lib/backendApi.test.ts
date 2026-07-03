@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   loginWithPassword,
   register,
+  verifyEmail,
+  resendVerifyCode,
   migrate,
   changePassword,
   setInviteCode,
@@ -186,37 +188,69 @@ describe('Task 5 — backendApi extended auth functions', () => {
   })
 
   describe('register', () => {
-    it('calls POST /api/auth/register with inviteCode, username, password, stores token (auto-login)', async () => {
-      const user: AuthUser = { id: 'new-u', label: 'newuser', role: 'user', imageCount: 0, quota: 100, unlimitedQuota: false, usedCount: 0, username: 'newuser' }
+    it('calls POST /api/auth/register with inviteCode, email, username, password; returns pendingEmail and does not store token', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-        new Response(JSON.stringify({ token: TEST_TOKEN, user }), {
+        new Response(JSON.stringify({ pendingEmail: true }), {
           status: 200, headers: { 'Content-Type': 'application/json' },
         }),
       )
+      const setItem = localStorage.setItem as unknown as ReturnType<typeof vi.fn>
+      setItem.mockClear()
 
-      const result = await register('INVITE123', 'newuser', 'pass12345678')
+      const result = await register('INVITE123', 'a@b.com', 'newuser', 'pass12345678')
 
       const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
       expect(url).toContain('/api/auth/register')
       expect(init.method).toBe('POST')
       const body = JSON.parse(init.body as string)
       expect(body.inviteCode).toBe('INVITE123')
+      expect(body.email).toBe('a@b.com')
       expect(body.username).toBe('newuser')
       expect(body.password).toBe('pass12345678')
-      expect(result.user.id).toBe('new-u')
+      expect(result.pendingEmail).toBe(true)
+      expect(setItem).not.toHaveBeenCalled()
     })
+  })
 
-    it('stores token on success (auto-login)', async () => {
-      const user: AuthUser = { id: 'u1', label: 'test', role: 'user', imageCount: 0, quota: 100, unlimitedQuota: false, usedCount: 0 }
+  describe('verifyEmail', () => {
+    it('calls POST /api/auth/verify-email with email and code, stores token', async () => {
+      const user: AuthUser = { id: 'new-u', label: 'newuser', role: 'user', imageCount: 0, quota: 100, unlimitedQuota: false, usedCount: 0, username: 'newuser', email: 'a@b.com', emailVerified: true }
       vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-        new Response(JSON.stringify({ token: 'auto-login-token', user }), {
+        new Response(JSON.stringify({ token: TEST_TOKEN, user, needsMigration: false }), {
           status: 200, headers: { 'Content-Type': 'application/json' },
         }),
       )
 
-      await register('', 'newuser', 'pass12345678')
+      const result = await verifyEmail('a@b.com', '123456')
 
-      expect(localStorage.setItem).toHaveBeenCalledWith('gpt-image-playground-token', 'auto-login-token')
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      expect(url).toContain('/api/auth/verify-email')
+      expect(init.method).toBe('POST')
+      const body = JSON.parse(init.body as string)
+      expect(body.email).toBe('a@b.com')
+      expect(body.code).toBe('123456')
+      expect(result.token).toBe(TEST_TOKEN)
+      expect(result.user.id).toBe('new-u')
+      expect(localStorage.setItem).toHaveBeenCalledWith('gpt-image-playground-token', TEST_TOKEN)
+    })
+  })
+
+  describe('resendVerifyCode', () => {
+    it('calls POST /api/auth/resend-verify-code with email', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+
+      const result = await resendVerifyCode('a@b.com')
+
+      const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      expect(url).toContain('/api/auth/resend-verify-code')
+      expect(init.method).toBe('POST')
+      const body = JSON.parse(init.body as string)
+      expect(body.email).toBe('a@b.com')
+      expect(result.ok).toBe(true)
     })
   })
 

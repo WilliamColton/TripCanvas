@@ -1,29 +1,28 @@
 import { useMemo, useState } from 'react'
 import { Check, ImageIcon, X } from 'lucide-react'
 import { useStore } from '../store'
-import { getTemplatePreviewImageUrl } from '../lib/backendApi'
+import TemplatePreviewImg from './TemplatePreviewImg'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog'
 
 interface Props {
   open: boolean
   onClose: () => void
-  onManageTemplates: () => void
 }
 
-export default function TemplatePickerModal({ open, onClose, onManageTemplates }: Props) {
+export default function TemplatePickerModal({ open, onClose }: Props) {
   const templates = useStore((s) => s.templates)
   const selectedTemplateId = useStore((s) => s.selectedTemplateId)
   const setSelectedTemplateId = useStore((s) => s.setSelectedTemplateId)
   const [category, setCategory] = useState('全部')
 
   const categories = useMemo(() => {
-    const values = Array.from(new Set(templates.map((template) => template.source === 'user' ? '我的模板' : template.category).filter(Boolean)))
+    const values = Array.from(new Set(templates.filter((template) => template.source !== 'user').map((template) => template.category).filter(Boolean)))
     return ['全部', ...values]
   }, [templates])
 
   const filteredTemplates = useMemo(() => {
-    if (category === '全部') return templates
-    if (category === '我的模板') return templates.filter((template) => template.source === 'user')
+    const publicTemplates = templates.filter((template) => template.source !== 'user')
+    if (category === '全部') return publicTemplates
     return templates.filter((template) => template.category === category && template.source !== 'user')
   }, [templates, category])
 
@@ -56,13 +55,6 @@ export default function TemplatePickerModal({ open, onClose, onManageTemplates }
                 {item}
               </button>
             ))}
-            <button
-              type="button"
-              onClick={onManageTemplates}
-              className="rounded-full border border-blue-200/70 px-3 py-1.5 text-xs text-blue-600 transition hover:bg-blue-50 dark:border-blue-400/20 dark:text-blue-300 dark:hover:bg-blue-500/10"
-            >
-              管理我的模板
-            </button>
           </div>
         </div>
 
@@ -82,7 +74,7 @@ export default function TemplatePickerModal({ open, onClose, onManageTemplates }
                   >
                     <div className="relative aspect-[4/3] bg-gradient-to-br from-blue-50 via-cyan-50 to-amber-50 dark:from-blue-500/10 dark:via-cyan-500/10 dark:to-amber-500/10">
                       {template.previewImageId ? (
-                        <img src={getTemplatePreviewImageUrl(template.previewImageId)} alt="" className="h-full w-full object-cover" />
+                        <TemplatePreviewImg id={template.previewImageId} className="h-full w-full object-cover" />
                       ) : (
                         <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-gray-300 dark:text-gray-500">
                           <ImageIcon className="h-8 w-8" strokeWidth={1.5} />
@@ -100,7 +92,7 @@ export default function TemplatePickerModal({ open, onClose, onManageTemplates }
                         <span className="truncate text-sm font-medium text-gray-800 dark:text-gray-100">{template.title}</span>
                       </div>
                       <div className="mb-2 flex flex-wrap gap-1.5">
-                        <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] text-blue-600 dark:text-blue-300">{template.source === 'user' ? '我的模板' : template.category}</span>
+                        <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] text-blue-600 dark:text-blue-300">{template.category}</span>
                         <span className="rounded-full bg-gray-500/10 px-2 py-0.5 text-[10px] text-gray-500">{(template.fieldSchema || []).length} 个字段</span>
                       </div>
                       <p className="line-clamp-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">{template.description || '暂无描述'}</p>
