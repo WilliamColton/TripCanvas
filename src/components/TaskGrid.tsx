@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect } from 'react'
+import { useMemo, useRef, useState, useEffect, useLayoutEffect } from 'react'
 import { Download, ImageIcon, Trash2, X } from 'lucide-react'
 import { ensureImageCached, useStore, removeMultipleTasks, removeTask } from '../store'
 import TaskCard from './TaskCard'
@@ -33,7 +33,7 @@ export default function TaskGrid() {
   const initialSelection = useRef<string[]>([])
   const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const updateBarLeft = () => {
       const el = rootRef.current
       if (!el) return
@@ -51,6 +51,14 @@ export default function TaskGrid() {
       ro?.disconnect()
     }
   }, [])
+
+  useEffect(() => {
+    if (selectedTaskIds.length === 0) return
+    const el = rootRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    setBarLeft(rect.left + rect.width / 2)
+  }, [selectedTaskIds.length])
 
   const filteredTasks = useMemo(() => {
     const sorted = [...tasks].sort((a, b) => b.createdAt - a.createdAt)
