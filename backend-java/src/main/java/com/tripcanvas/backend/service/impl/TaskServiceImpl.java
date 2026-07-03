@@ -48,8 +48,8 @@ public class TaskServiceImpl implements TaskService {
 
     @Override
     @Transactional
-    public QuotaCheckResult checkQuotaAndCreateTask(String userId, TaskRecordResponse task, int n) {
-        int normalizedN = TaskService.normalizeTaskN(n);
+    public QuotaCheckResult checkQuotaAndCreateTask(String userId, TaskRecordResponse task, int creditCost) {
+        int normalizedCreditCost = normalizeCreditCost(creditCost);
         UserEntity user = userMapper.selectOneById(userId);
         if (user == null) {
             return new QuotaCheckResult(false, "用户不存在", null);
@@ -58,12 +58,12 @@ public class TaskServiceImpl implements TaskService {
             throw ApiException.conflict("任务 ID 已存在");
         }
         if ((user.getUnlimitedQuota() == null || user.getUnlimitedQuota() == 0)) {
-            int pending = countPendingImages(userId);
+            int pending = countPendingCredits(userId);
             int used = user.getUsedCount() == null ? 0 : user.getUsedCount();
             int quota = user.getQuota() == null ? 0 : user.getQuota();
-            if (used + pending + normalizedN > quota) {
+            if (used + pending + normalizedCreditCost > quota) {
                 int remaining = Math.max(0, quota - used - pending);
-                return new QuotaCheckResult(false, "配额不足，剩余 %d 张（含进行中任务），本次需要 %d 张".formatted(remaining, normalizedN), null);
+                return new QuotaCheckResult(false, "配额不足，剩余 %d 积分（含进行中任务），本次需要 %d 积分".formatted(remaining, normalizedCreditCost), null);
             }
         }
         taskMapper.insert(toEntity(userId, task));
@@ -91,16 +91,24 @@ public class TaskServiceImpl implements TaskService {
     }
 
     @Override
-    public int countPendingImages(String userId) {
+    public int countPendingCredits(String userId) {
         List<TaskEntity> tasks = taskMapper.selectListByQuery(
             FlexQuery.and(FlexQuery.eq("user_id", userId), "status IN ('queued','running')")
         );
         int total = 0;
         for (TaskEntity task : tasks) {
-            TaskParamsResponse params = JsonUtils.parseTaskParams(task.getParamsJson());
-            total += TaskService.normalizeTaskN(params == null ? null : params.n());
+            if (task.getCreditCost() != null && task.getCreditCost() > 0) {
+                total += task.getCreditCost();
+            } else {
+                TaskParamsResponse params = JsonUtils.parseTaskParams(task.getParamsJson());
+                total += TaskService.normalizeTaskN(params == null ? null : params.n());
+            }
         }
         return total;
+    }
+
+    private int normalizeCreditCost(int creditCost) {
+        return creditCost < 1 ? 1 : creditCost;
     }
 
     private TaskEntity selectTask(String userId, String taskId) {

@@ -16,6 +16,7 @@ public record TaskRecordResponse(
     String templateResolutionName,
     String templateTitle,
     Integer templateVersion,
+    Integer creditCost,
     TemplateInputs templateInputs,
     String userPrompt,
     @JsonIgnore String assembledPrompt,

@@ -19,13 +19,20 @@ interface SelectProps {
   className?: string
 }
 
+const EMPTY_VALUE = '__tripcanvas_empty_select_value__'
+
+function toItemValue(value: string | number) {
+  return String(value) === '' ? EMPTY_VALUE : String(value)
+}
+
 export default function Select({ value, onChange, options, disabled, className }: SelectProps) {
   return (
     <ShadcnSelect
-      value={String(value)}
+      value={toItemValue(value)}
       onValueChange={(val) => {
-        const option = options.find((o) => String(o.value) === val)
-        onChange(option ? option.value : val)
+        const rawValue = val === EMPTY_VALUE ? '' : val
+        const option = options.find((o) => String(o.value) === rawValue)
+        onChange(option ? option.value : rawValue)
       }}
       disabled={disabled}
     >
@@ -34,7 +41,7 @@ export default function Select({ value, onChange, options, disabled, className }
       </SelectTrigger>
       <SelectContent>
         {options.map((option) => (
-          <SelectItem key={option.value} value={String(option.value)}>
+          <SelectItem key={String(option.value)} value={toItemValue(option.value)}>
             {option.label}
           </SelectItem>
         ))}

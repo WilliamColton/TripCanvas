@@ -1,4 +1,5 @@
 import type { Announcement, BugFeedback, BugFeedbackStatus, ChangelogEntry, ChangelogEntryPayload, PromptTemplate, PromptTemplatePayload } from '../types'
+import { sha256Hex } from '../lib/backendApi'
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL?.trim()?.replace(/\/+$/, '') || 'http://localhost:3001'
 const ADMIN_TOKEN_KEY = 'gpt-image-playground-admin-token'
@@ -423,12 +424,35 @@ export function adminPreviewTemplate(payload: { promptBody: string; fieldSchema:
 
 export async function adminUploadTemplatePreviewImage(dataUrl: string): Promise<{ id: string; url: string; createdAt: number }> {
   const blob = await dataUrlToBlob(dataUrl)
-  const formData = new FormData()
-  formData.append('image', blob, `preview.${blob.type.split('/')[1] || 'png'}`)
-  return adminRequest('/api/admin/template-preview-images', {
+  const mime = blob.type || 'image/png'
+  const sha = await sha256Hex(blob)
+
+  const prepare = await adminRequest<{ deduplicated: boolean; fallback: boolean; id?: string; key?: string; uploadUrl?: string; url?: string; createdAt?: number; source?: string }>('/api/images/prepare', {
     method: 'POST',
-    body: formData,
+    body: JSON.stringify({ sha256: sha, mime, size: blob.size, source: 'upload' }),
   })
+  if (prepare.deduplicated && prepare.id) {
+    return { id: prepare.id, url: prepare.url ?? dataUrl, createdAt: prepare.createdAt ?? Date.now() }
+  }
+  if (prepare.fallback) {
+    const formData = new FormData()
+    formData.append('image', blob, `preview.${mime.split('/')[1] || 'png'}`)
+    return adminRequest('/api/admin/template-preview-images', { method: 'POST', body: formData })
+  }
+  if (!prepare.id || !prepare.key || !prepare.uploadUrl) {
+    throw new Error('直传预备失败')
+  }
+  const putResponse = await fetch(prepare.uploadUrl, {
+    method: 'PUT',
+    headers: { 'Cache-Control': 'max-age=604800, immutable' },
+    body: blob,
+  })
+  if (!putResponse.ok) throw new Error(`直传失败: HTTP ${putResponse.status}`)
+  const committed = await adminRequest<{ id: string; url?: string; createdAt: number; source: string }>('/api/images/commit', {
+    method: 'POST',
+    body: JSON.stringify({ id: prepare.id, key: prepare.key, sha256: sha, mime, size: blob.size, source: 'upload' }),
+  })
+  return { id: committed.id, url: committed.url ?? dataUrl, createdAt: committed.createdAt }
 }
 
 async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
@@ -458,4 +482,15 @@ export function adminUpdateInviteConfig(inviterReward: number, inviteeReward: nu
 
 export function adminListInvites(): Promise<{ invites: Array<{ username: string; inviteCode: string; usageCount: number }> }> {
   return adminRequest('/api/admin/invites')
+}
+
+export function adminGetEmailConfig(): Promise<{ allowedSuffixes: string[] }> {
+  return adminRequest('/api/admin/email-config')
+}
+
+export function adminUpdateEmailConfig(allowedSuffixes: string[]): Promise<{ ok: true; allowedSuffixes: string[] }> {
+  return adminRequest('/api/admin/email-config', {
+    method: 'PUT',
+    body: JSON.stringify({ allowedSuffixes }),
+  })
 }

@@ -87,6 +87,19 @@ public class TemplateController {
             .body(new FileSystemResource(imageFile.path()));
     }
 
+    /**
+     * 解析模板预览图对外访问直链（公开）。前端按 id 懒解析并缓存，避免每次刷新都走 302 重新生成预签名。
+     */
+    @GetMapping("/api/template-preview-images/{id}/url")
+    public ResponseEntity<ApiPayloads.ImageUrl> resolvePreviewUrl(@PathVariable String id) {
+        ImageService.ImageFile imageFile = imageService.readTemplatePreviewImageFile(id);
+        String url = imageFile.accessUrl() != null && !imageFile.accessUrl().isBlank()
+            ? imageFile.accessUrl()
+            : "/api/template-preview-images/" + id;
+        return ResponseEntity.ok()
+            .body(new ApiPayloads.ImageUrl(url, imageFile.image().mime(), imageFile.image().size()));
+    }
+
     @GetMapping("/api/admin/templates")
     public ApiPayloads.Templates adminList() {
         return new ApiPayloads.Templates(templateService.listForAdmin());

@@ -6,18 +6,12 @@ import { normalizeImageSize } from '../lib/size'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
 import { Textarea } from './ui/textarea'
-import MyTemplateModal from './MyTemplateModal'
 import TemplatePickerModal from './TemplatePickerModal'
 import { getTemplatePreviewImageUrl } from '../lib/backendApi'
+import TemplatePreviewImg from './TemplatePreviewImg'
 import { getTemplatePreviewLightboxId } from '../lib/lightboxIds'
 
 const API_MAX_IMAGES = 16
-const STYLE_PRESETS = ['默认', '新中式', '实景摄影风']
-
-function fieldLooksLikeStyle(field: PromptTemplateField) {
-  const text = `${field.label || ''}${field.key || ''}`
-  return text.includes('风格') || text.includes('样式')
-}
 
 function fieldPlaceholder(field: PromptTemplateField) {
   if (field.placeholder) return field.placeholder
@@ -26,6 +20,25 @@ function fieldPlaceholder(field: PromptTemplateField) {
 
 function labelText(label: string, required = false) {
   return `${required ? '*' : ''}${label}：`
+}
+
+function customInputKey(key: string) {
+  return `${key}__custom`
+}
+
+function templateFieldValue(field: PromptTemplateField, inputs: Record<string, unknown>) {
+  if (field.type === 'select' && inputs[field.key] === '自定义') {
+    return inputs[customInputKey(field.key)]
+  }
+  return inputs[field.key]
+}
+
+function selectOptions(field: PromptTemplateField) {
+  const options = [...(field.options || [])]
+  if (field.type === 'select' && field.allowCustom && !options.includes('自定义')) {
+    options.push('自定义')
+  }
+  return options
 }
 
 function useTemplateBootstrap() {
@@ -71,9 +84,7 @@ export default function InputBar() {
   const [isDragging, setIsDragging] = useState(false)
   const [showSizePicker, setShowSizePicker] = useState(false)
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
-  const [showMyTemplateModal, setShowMyTemplateModal] = useState(false)
   const [nInput, setNInput] = useState(String(params.n))
-  const [freeformStyle, setFreeformStyle] = useState(STYLE_PRESETS[0])
 
   useTemplateBootstrap()
 
@@ -84,14 +95,6 @@ export default function InputBar() {
   const selectedResolutionId = resolutionOptions.some((option) => option.id === selectedTemplateResolutionId)
     ? selectedTemplateResolutionId
     : resolutionOptions[0]?.id || ''
-  const styleField = templateFields.find(fieldLooksLikeStyle) || null
-  const formFields = templateFields.filter((field) => field.key !== styleField?.key)
-  const selectedStyleValue = styleField ? String(templateInputs[styleField.key] ?? '') : ''
-  const styleOptions = useMemo(() => {
-    const configured = (styleField?.options || []).map((option) => option.trim()).filter(Boolean)
-    return configured.length > 0 ? configured : STYLE_PRESETS
-  }, [styleField])
-  const selectedStyleOption = styleField ? selectedStyleValue || styleOptions[0] || '' : freeformStyle
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
   const remainingCredits = authUser
     ? authUser.unlimitedQuota
@@ -103,12 +106,16 @@ export default function InputBar() {
     : ''
 
   const canSubmit = isTemplateMode
-    ? Boolean(selectedTemplateId) && formFields.concat(styleField ? [styleField] : []).every((field) => {
+    ? Boolean(selectedTemplateId) && templateFields.every((field) => {
+        const value = templateFieldValue(field, templateInputs)
+        if (field.type === 'select' && templateInputs[field.key] === '自定义') {
+          return value != null && String(value).trim() !== ''
+        }
         if (!field.required) return true
-        const value = templateInputs[field.key]
         return value != null && String(value).trim() !== ''
       })
     : Boolean(prompt.trim())
+  const totalCreditCost = normalizeTaskN(params.n) * (isTemplateMode ? Math.max(1, selectedTemplate?.creditCost || 1) : 1)
 
   useEffect(() => {
     setNInput(String(params.n))
@@ -123,13 +130,6 @@ export default function InputBar() {
       setSelectedTemplateResolutionId(selectedResolutionId)
     }
   }, [selectedTemplate, selectedResolutionId, selectedTemplateResolutionId, setSelectedTemplateResolutionId])
-
-  useEffect(() => {
-    if (!styleField || styleOptions.length === 0) return
-    if (!selectedStyleValue || !styleOptions.includes(selectedStyleValue)) {
-      setTemplateInput(styleField.key, styleOptions[0])
-    }
-  }, [styleField, selectedStyleValue, styleOptions, setTemplateInput])
 
   const commitN = useCallback(() => {
     const nextValue = Number(nInput)
@@ -238,21 +238,10 @@ export default function InputBar() {
   const templateOptions = useMemo(
     () => [
       { label: templateLoading ? '模板加载中' : '请选择板式', value: '__none' },
-      ...templates.map((template) => ({ label: template.title, value: template.id })),
+      ...templates.filter((template) => template.source !== 'user').map((template) => ({ label: template.title, value: template.id })),
     ],
     [templates, templateLoading],
   )
-
-  const handleStyleChange = (style: string) => {
-    if (styleField) {
-      setTemplateInput(styleField.key, style)
-      return
-    }
-    setFreeformStyle(style)
-    const stylePrefixes = STYLE_PRESETS.filter((item) => item !== '默认').map((item) => `${item}。`)
-    const promptWithoutStyle = stylePrefixes.reduce((text, prefix) => text.startsWith(prefix) ? text.slice(prefix.length) : text, prompt)
-    setPrompt(style === '默认' ? promptWithoutStyle : `${style}。${promptWithoutStyle}`.trim())
-  }
 
   const handleReset = () => {
     clearTemplateInputs()
@@ -271,9 +260,10 @@ export default function InputBar() {
     const onChange = (next: unknown) => setTemplateInput(field.key, next)
 
     return (
-      <label key={field.key} className={labelClass}>
-        <span className="truncate">{labelText(field.label || field.key, field.required)}</span>
-        {field.type === 'long_text' ? (
+      <div key={field.key} className="contents">
+        <label className={labelClass}>
+          <span className="truncate">{labelText(field.label || field.key, field.required)}</span>
+          {field.type === 'long_text' ? (
           <Textarea
             value={String(value ?? '')}
             onChange={(e) => onChange(e.target.value)}
@@ -281,21 +271,21 @@ export default function InputBar() {
             placeholder={fieldPlaceholder(field)}
             className={`${inputClass} min-h-[4.25rem] resize-none py-2`}
           />
-        ) : field.type === 'select' && field.options?.length ? (
+          ) : field.type === 'select' && selectOptions(field).length ? (
           <Select
             value={String(value ?? '')}
             onChange={(next) => onChange(next)}
-            options={[{ label: fieldPlaceholder(field), value: '' }, ...field.options.map((option) => ({ label: option, value: option }))]}
+            options={[{ label: fieldPlaceholder(field), value: '' }, ...selectOptions(field).map((option) => ({ label: option, value: option }))]}
             className={inputClass}
           />
-        ) : field.type === 'boolean' ? (
+          ) : field.type === 'boolean' ? (
           <Select
             value={String(value ?? false)}
             onChange={(next) => onChange(next === 'true')}
             options={[{ label: '否', value: 'false' }, { label: '是', value: 'true' }]}
             className={inputClass}
           />
-        ) : (
+          ) : (
           <input
             value={String(value ?? '')}
             onChange={(e) => onChange(e.target.value)}
@@ -304,8 +294,21 @@ export default function InputBar() {
             placeholder={fieldPlaceholder(field)}
             className={inputClass}
           />
+          )}
+        </label>
+        {field.type === 'select' && value === '自定义' && (
+          <label className={labelClass}>
+            <span className="truncate">{labelText(field.label || field.key, field.required)}</span>
+            <input
+              value={String(templateInputs[customInputKey(field.key)] ?? '')}
+              onChange={(e) => setTemplateInput(customInputKey(field.key), e.target.value)}
+              maxLength={field.maxLength || undefined}
+              placeholder={`请输入自定义${field.label || field.key}`}
+              className={inputClass}
+            />
+          </label>
         )}
-      </label>
+      </div>
     )
   }
 
@@ -381,7 +384,7 @@ export default function InputBar() {
                 title={previewImageUrl ? '点击查看大图' : '暂无板式参考图'}
               >
                 {previewImageUrl ? (
-                  <img src={previewImageUrl} alt="" className="h-full w-full object-cover" />
+                  <TemplatePreviewImg id={selectedTemplate!.previewImageId!} className="h-full w-full object-cover" />
                 ) : (
                   <ImageIcon className="h-10 w-10" strokeWidth={1.3} />
                 )}
@@ -477,31 +480,12 @@ export default function InputBar() {
               >
                 选择模板
               </button>
-              <button
-                type="button"
-                onClick={() => setShowMyTemplateModal(true)}
-                className="rounded-md bg-[#2f80ed] px-4 py-2 text-sm font-bold text-white shadow-[0_3px_10px_rgba(47,128,237,0.35)] transition hover:bg-blue-600"
-              >
-                我的模板
-              </button>
             </div>
           </div>
         </div>
 
-        <div className="mt-5">
-          <div className="mb-3 text-base font-bold text-black dark:text-gray-100">
-            {styleField?.required ? '*风格' : '风格'}
-          </div>
-          <Select
-            value={selectedStyleOption}
-            onChange={(value) => handleStyleChange(String(value))}
-            options={styleOptions.map((style) => ({ label: style, value: style }))}
-            className={`${inputClass} max-w-[320px]`}
-          />
-        </div>
-
         <div className="mt-5 grid gap-x-8 gap-y-3 xl:grid-cols-2">
-          {selectedTemplate ? formFields.map(renderTemplateField) : renderFreeformField()}
+          {selectedTemplate ? templateFields.map(renderTemplateField) : renderFreeformField()}
           <label className={labelClass}>
             <span>补充：</span>
             <input
@@ -588,7 +572,7 @@ export default function InputBar() {
               className="flex h-[52px] items-center justify-center gap-2 rounded-md bg-[#2f80ed] text-base font-black text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-white"
             >
               {templateLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Paperclip className="h-5 w-5" />}
-              消耗{normalizeTaskN(params.n)}积分生成图片
+              消耗{totalCreditCost}积分生成图片
             </button>
           </div>
         </div>
@@ -609,12 +593,7 @@ export default function InputBar() {
       <TemplatePickerModal
         open={showTemplatePicker}
         onClose={() => setShowTemplatePicker(false)}
-        onManageTemplates={() => {
-          setShowTemplatePicker(false)
-          setShowMyTemplateModal(true)
-        }}
       />
-      <MyTemplateModal open={showMyTemplateModal} onClose={() => setShowMyTemplateModal(false)} />
     </>
   )
 }

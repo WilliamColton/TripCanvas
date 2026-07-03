@@ -34,4 +34,11 @@ public class UserEntity {
     private Long inviteCodeSetAt;
     @Column("invited_by")
     private String invitedBy;
+    private String email;
+    @Column("email_verified_at")
+    private Long emailVerifiedAt;
+    @Column("email_verification_code")
+    private String emailVerificationCode;
+    @Column("email_verification_expires_at")
+    private Long emailVerificationExpiresAt;
 }

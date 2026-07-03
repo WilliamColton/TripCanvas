@@ -1,18 +1,16 @@
 package com.tripcanvas.backend.controller;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tripcanvas.backend.common.web.ApiResponse;
 import com.tripcanvas.backend.dto.request.TaskRequests;
 import com.tripcanvas.backend.dto.response.ApiPayloads;
 import com.tripcanvas.backend.dto.response.TaskRecordResponse;
 import com.tripcanvas.backend.security.AuthContext;
 import com.tripcanvas.backend.service.GenerationWorkerService;
+import com.tripcanvas.backend.service.TaskProgressBroadcaster;
 import com.tripcanvas.backend.service.TaskService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
-import java.io.IOException;
-import java.time.Duration;
-import java.time.Instant;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -22,7 +20,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @RequestMapping("/api/tasks")
@@ -30,7 +28,7 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 public class TaskController {
     private final TaskService taskService;
     private final GenerationWorkerService generationWorkerService;
-    private final ObjectMapper objectMapper;
+    private final TaskProgressBroadcaster broadcaster;
 
     @GetMapping
     public ApiPayloads.Tasks list(HttpServletRequest request) {
@@ -50,6 +48,7 @@ public class TaskController {
         String userId = AuthContext.requireUserId(request);
         generationWorkerService.cancel(userId, id);
         taskService.deleteTask(userId, id);
+        broadcaster.complete(id);
         return ApiResponse.ok();
     }
 
@@ -57,36 +56,37 @@ public class TaskController {
     public ApiResponse<Void> clear(HttpServletRequest request) {
         String userId = AuthContext.requireUserId(request);
         generationWorkerService.cancelUser(userId);
+        List<TaskRecordResponse> tasks = taskService.listTasks(userId);
         taskService.clearTasks(userId);
+        for (TaskRecordResponse task : tasks) {
+            broadcaster.complete(task.id());
+        }
         return ApiResponse.ok();
     }
 
+    /**
+     * 任务进度 SSE。先 subscribe（让 worker 期间的 publish 进 earlyEvents 不丢），再 getTask 发首帧，
+     * 终态则立即 complete；不再每秒轮询 DB。event 名与 data 格式与原 StreamingResponseBody 方案一致，前端无需改。
+     */
     @GetMapping(value = "/{id}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public StreamingResponseBody stream(HttpServletRequest request, @PathVariable String id) {
+    public SseEmitter stream(HttpServletRequest request, @PathVariable String id) {
         String userId = AuthContext.requireUserId(request);
-        return outputStream -> {
-            Instant deadline = Instant.now().plus(Duration.ofMinutes(10));
-            String lastStatus = "";
-            while (Instant.now().isBefore(deadline)) {
-                try {
-                    TaskRecordResponse task = taskService.getTask(userId, id);
-                    if (!task.status().equals(lastStatus) || "done".equals(task.status()) || "error".equals(task.status())) {
-                        writeTask(outputStream, task);
-                        lastStatus = task.status();
-                        if ("done".equals(task.status()) || "error".equals(task.status())) {
-                            return;
-                        }
-                    }
-                    Thread.sleep(1000);
-                } catch (Exception e) {
-                    return;
-                }
+        SseEmitter emitter = broadcaster.subscribe(id);
+        try {
+            TaskRecordResponse current = taskService.getTask(userId, id);
+            emitter.send(SseEmitter.event()
+                .name("task-update")
+                .data(current, MediaType.APPLICATION_JSON));
+            if ("done".equals(current.status()) || "error".equals(current.status())) {
+                emitter.complete();
             }
-        };
-    }
-
-    private void writeTask(java.io.OutputStream outputStream, TaskRecordResponse task) throws IOException {
-        outputStream.write(("event: task-update\ndata: " + objectMapper.writeValueAsString(task) + "\n\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        outputStream.flush();
+        } catch (RuntimeException e) {
+            broadcaster.unsubscribe(id, emitter);
+            throw e;
+        } catch (Exception e) {
+            broadcaster.unsubscribe(id, emitter);
+            throw new IllegalStateException("无法初始化任务进度流", e);
+        }
+        return emitter;
     }
 }

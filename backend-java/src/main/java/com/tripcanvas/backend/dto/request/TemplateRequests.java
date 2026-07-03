@@ -22,6 +22,7 @@ public final class TemplateRequests {
         @Size(max = 64, message = "预览图片 ID 无效") String previewImageId,
         @NotBlank(message = "请输入模板提示词") @Size(max = 20000, message = "模板提示词最多 20000 个字符") String promptBody,
         @Size(max = 4000, message = "负面约束最多 4000 个字符") String negativePrompt,
+        Integer creditCost,
         @Pattern(regexp = "sections", message = "拼接模式无效") String assemblyMode,
         @Pattern(regexp = "draft|published|disabled|archived", message = "模板状态无效") String status,
         Integer sortOrder,

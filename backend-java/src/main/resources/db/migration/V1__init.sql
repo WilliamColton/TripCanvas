@@ -18,9 +18,14 @@ CREATE TABLE IF NOT EXISTS users (
   invite_code VARCHAR(64),
   invite_code_set_at BIGINT,
   invited_by VARCHAR(64),
+  email VARCHAR(255),
+  email_verified_at BIGINT,
+  email_verification_code VARCHAR(16),
+  email_verification_expires_at BIGINT,
   PRIMARY KEY (id),
   UNIQUE KEY uk_users_username (username),
-  UNIQUE KEY uk_users_invite_code (invite_code)
+  UNIQUE KEY uk_users_invite_code (invite_code),
+  UNIQUE KEY uk_users_email (email)
 );
 
 CREATE INDEX idx_users_invited_by ON users(invited_by);

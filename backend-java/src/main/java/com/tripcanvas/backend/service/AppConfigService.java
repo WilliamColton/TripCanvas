@@ -32,6 +32,12 @@ public interface AppConfigService {
 
     InviteConfig setInviteConfig(AdminRequests.InviteConfigRequest request);
 
+    MailConfig mailConfig();
+
+    EmailConfig emailConfig();
+
+    EmailConfig setEmailConfig(AdminRequests.EmailConfigRequest request);
+
     long salePriceForTier(String tier);
 
     record PricingConfig(
@@ -76,5 +82,11 @@ public interface AppConfigService {
     }
 
     record InviteConfig(int inviterReward, int inviteeReward, int defaultQuota, boolean inviteEnabled) {
+    }
+
+    record MailConfig(String apiKey, String from, int verificationTtlSeconds) {
+    }
+
+    record EmailConfig(List<String> allowedSuffixes) {
     }
 }

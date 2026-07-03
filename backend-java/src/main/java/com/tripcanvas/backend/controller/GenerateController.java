@@ -18,13 +18,13 @@ public class GenerateController {
 
     @PostMapping("/api/generate")
     public ApiPayloads.GenerateSubmit generate(HttpServletRequest request, @Valid @RequestBody GenerateRequest body) {
-        GenerationService.SubmitResult result = generationService.submit(AuthContext.requireUserId(request), body, false);
+        GenerationService.SubmitResult result = generationService.submit(AuthContext.requireUser(request), body, false);
         return new ApiPayloads.GenerateSubmit(result.taskId(), result.status());
     }
 
     @PostMapping("/api/edit")
     public ApiPayloads.GenerateSubmit edit(HttpServletRequest request, @Valid @RequestBody GenerateRequest body) {
-        GenerationService.SubmitResult result = generationService.submit(AuthContext.requireUserId(request), body, true);
+        GenerationService.SubmitResult result = generationService.submit(AuthContext.requireUser(request), body, true);
         return new ApiPayloads.GenerateSubmit(result.taskId(), result.status());
     }
 }

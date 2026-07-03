@@ -13,6 +13,8 @@ export interface AuthUser {
   usedCount: number
   username?: string
   needsMigration?: boolean
+  email?: string
+  emailVerified?: boolean
 }
 
 export function getBackendToken(): string {
@@ -111,13 +113,28 @@ export async function loginWithPassword(username: string, password: string): Pro
   return result
 }
 
-export async function register(inviteCode: string, username: string, password: string): Promise<{ token: string; user: AuthUser }> {
-  const result = await request<{ token: string; user: AuthUser }>('/api/auth/register', {
+export async function register(inviteCode: string, email: string, username: string, password: string): Promise<{ pendingEmail: true }> {
+  const result = await request<{ pendingEmail: true }>('/api/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ inviteCode, username, password }),
+    body: JSON.stringify({ inviteCode, email, username, password }),
+  })
+  return result
+}
+
+export async function verifyEmail(email: string, code: string): Promise<{ token: string; user: AuthUser; needsMigration: boolean }> {
+  const result = await request<{ token: string; user: AuthUser; needsMigration: boolean }>('/api/auth/verify-email', {
+    method: 'POST',
+    body: JSON.stringify({ email, code }),
   })
   setBackendToken(result.token)
   return result
+}
+
+export function resendVerifyCode(email: string): Promise<{ ok: true }> {
+  return request('/api/auth/resend-verify-code', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
 }
 
 export function migrate(username: string, password: string, confirmPassword: string): Promise<{ user: AuthUser }> {
@@ -212,17 +229,56 @@ export function submitBugFeedback(payload: CreateBugFeedbackPayload): Promise<{ 
 
 export async function uploadImage(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload'): Promise<StoredImage> {
   const blob = await dataUrlToBlob(dataUrl)
-  const formData = new FormData()
-  formData.append('image', blob, `image.${blob.type.split('/')[1] || 'png'}`)
-  formData.append('source', source)
-  const result = await request<{ id: string; url?: string; createdAt: number; source: StoredImage['source'] }>('/api/images', {
+  const mime = blob.type || 'image/png'
+  const sha = await sha256Hex(blob)
+
+  const prepare = await request<{ deduplicated: boolean; fallback: boolean; id?: string; key?: string; uploadUrl?: string; url?: string; createdAt?: number; source?: StoredImage['source'] }>('/api/images/prepare', {
     method: 'POST',
-    body: formData,
+    body: JSON.stringify({ sha256: sha, mime, size: blob.size, source }),
   })
-  if (!result.url || !result.url.startsWith('http')) {
-    throw new Error('后端未返回 COS 图片直链')
+
+  if (prepare.deduplicated && prepare.id) {
+    const url = prepare.url && prepare.url.startsWith('http') ? prepare.url : dataUrl
+    return { id: prepare.id, dataUrl: url, createdAt: prepare.createdAt ?? Date.now(), source: prepare.source ?? source }
   }
-  return { id: result.id, dataUrl: result.url, createdAt: result.createdAt, source: result.source }
+
+  if (prepare.fallback) {
+    // 本地存储不支持直传，回退 multipart。
+    const formData = new FormData()
+    formData.append('image', blob, `image.${mime.split('/')[1] || 'png'}`)
+    formData.append('source', source)
+    const result = await request<{ id: string; url?: string; createdAt: number; source: StoredImage['source'] }>('/api/images', {
+      method: 'POST',
+      body: formData,
+    })
+    const url = result.url && result.url.startsWith('http') ? result.url : dataUrl
+    return { id: result.id, dataUrl: url, createdAt: result.createdAt, source: result.source }
+  }
+
+  if (!prepare.id || !prepare.key || !prepare.uploadUrl) {
+    throw new Error('直传预备失败')
+  }
+  // 前端直传 PUT 到 COS 预签名 URL。带 Cache-Control 让对象长缓存（与后端中转上传一致）。
+  const putResponse = await fetch(prepare.uploadUrl, {
+    method: 'PUT',
+    headers: { 'Cache-Control': 'max-age=604800, immutable' },
+    body: blob,
+  })
+  if (!putResponse.ok) throw new Error(`直传失败: HTTP ${putResponse.status}`)
+
+  const committed = await request<{ id: string; url?: string; createdAt: number; source: StoredImage['source'] }>('/api/images/commit', {
+    method: 'POST',
+    body: JSON.stringify({ id: prepare.id, key: prepare.key, sha256: sha, mime, size: blob.size, source }),
+  })
+  const url = committed.url && committed.url.startsWith('http') ? committed.url : dataUrl
+  return { id: committed.id, dataUrl: url, createdAt: committed.createdAt, source: committed.source }
+}
+
+/** 计算 Blob 的 SHA-256 十六进制摘要。 */
+export async function sha256Hex(blob: Blob): Promise<string> {
+  const buf = await blob.arrayBuffer()
+  const digest = await crypto.subtle.digest('SHA-256', buf)
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 /**
@@ -238,6 +294,55 @@ export async function resolveImageUrl(id: string): Promise<string> {
 
 export function getTemplatePreviewImageUrl(id: string): string {
   return buildUrl(`/api/template-preview-images/${encodeURIComponent(id)}`)
+}
+
+// 模板预览图直链缓存：内存 + localStorage，TTL 6 天（< 7 天预签名）。
+const previewUrlCache = new Map<string, string>()
+const PREVIEW_URL_CACHE_KEY = 'tripcanvas-preview-url-cache-v1'
+const PREVIEW_URL_TTL_MS = 6 * 24 * 60 * 60 * 1000
+
+function loadPersistedPreviewUrls() {
+  try {
+    const raw = localStorage.getItem(PREVIEW_URL_CACHE_KEY)
+    if (!raw) return
+    const obj = JSON.parse(raw) as Record<string, { url: string; expiresAt: number }>
+    const now = Date.now()
+    for (const [id, entry] of Object.entries(obj)) {
+      if (entry?.url && entry.expiresAt > now) previewUrlCache.set(id, entry.url)
+    }
+  } catch { /* ignore */ }
+}
+loadPersistedPreviewUrls()
+
+function persistPreviewUrl(id: string, url: string) {
+  try {
+    const raw = localStorage.getItem(PREVIEW_URL_CACHE_KEY)
+    const obj = raw ? JSON.parse(raw) as Record<string, { url: string; expiresAt: number }> : {}
+    obj[id] = { url, expiresAt: Date.now() + PREVIEW_URL_TTL_MS }
+    localStorage.setItem(PREVIEW_URL_CACHE_KEY, JSON.stringify(obj))
+  } catch { /* ignore */ }
+}
+
+/** 同步读取已缓存的预览图直链（未缓存返回 undefined）。 */
+export function getCachedTemplatePreviewUrl(id: string): string | undefined {
+  return previewUrlCache.get(id)
+}
+
+/** 按 id 异步解析模板预览图直链并缓存。 */
+export async function resolveTemplatePreviewUrl(id: string): Promise<string | undefined> {
+  const cached = previewUrlCache.get(id)
+  if (cached) return cached
+  try {
+    const result = await request<{ url: string }>(`/api/template-preview-images/${encodeURIComponent(id)}/url`)
+    if (result.url && result.url.startsWith('http')) {
+      previewUrlCache.set(id, result.url)
+      persistPreviewUrl(id, result.url)
+      return result.url
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
 }
 
 export function getTasks(): Promise<{ tasks: TaskRecord[] }> {

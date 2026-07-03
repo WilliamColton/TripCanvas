@@ -50,8 +50,20 @@ public class AuthController {
 
     @PostMapping("/register")
     public RegisterPayload register(@Valid @RequestBody AuthRequests.RegisterRequest request) {
-        AuthService.AuthResult result = authService.register(request.username(), request.password(), request.inviteCode());
-        return new RegisterPayload(result.token(), result.user());
+        authService.registerWithEmail(request.email(), request.username(), request.password(), request.inviteCode());
+        return new RegisterPayload(true);
+    }
+
+    @PostMapping("/verify-email")
+    public ApiPayloads.AuthLogin verifyEmail(@Valid @RequestBody AuthRequests.VerifyEmailRequest request) {
+        AuthService.AuthResult result = authService.verifyEmail(request.email(), request.code());
+        return new ApiPayloads.AuthLogin(result.token(), result.user(), result.needsMigration());
+    }
+
+    @PostMapping("/resend-verify-code")
+    public ApiResponse<Void> resendVerifyCode(@Valid @RequestBody AuthRequests.ResendVerifyCodeRequest request) {
+        authService.resendVerifyCode(request.email());
+        return ApiResponse.ok();
     }
 
     @PostMapping("/migrate")
@@ -100,6 +112,6 @@ public class AuthController {
         }
     }
 
-    public record RegisterPayload(String token, AuthUserResponse user) {
+    public record RegisterPayload(boolean pendingEmail) {
     }
 }

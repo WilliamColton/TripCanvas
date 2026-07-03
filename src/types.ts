@@ -11,6 +11,7 @@ export interface AppSettings {
   codexCli: boolean
   theme: ThemeMode
   inviteEnabled: boolean
+  allowedEmailSuffixes?: string[]
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -20,6 +21,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   codexCli: false,
   theme: 'system',
   inviteEnabled: true,
+  allowedEmailSuffixes: [],
 }
 
 // ===== 任务参数 =====
@@ -83,6 +85,7 @@ export interface PromptTemplateField {
   help?: string
   defaultValue?: unknown
   options?: string[]
+  allowCustom?: boolean
   maxLength?: number
 }
 
@@ -105,6 +108,7 @@ export interface PromptTemplate {
   previewImageId?: string
   promptBody?: string
   negativePrompt?: string
+  creditCost?: number
   assemblyMode: string
   status: PromptTemplateStatus
   sortOrder: number
@@ -123,6 +127,7 @@ export interface PromptTemplatePayload {
   previewImageId?: string
   promptBody: string
   negativePrompt?: string
+  creditCost?: number
   assemblyMode?: string
   status?: PromptTemplateStatus
   sortOrder?: number
@@ -144,6 +149,7 @@ export interface TaskRecord {
   templateResolutionName?: string
   templateTitle?: string
   templateVersion?: number
+  creditCost?: number
   templateInputs?: PromptTemplateInputs
   userPrompt?: string
   params: TaskParams

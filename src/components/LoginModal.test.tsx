@@ -78,8 +78,8 @@ describe('Task 7 — LoginModal Tab switching + RegisterModal creation', () => {
     expect(registerModalSource).toContain('export default function RegisterModal')
   })
 
-  it('RegisterModal imports register, bootstrapBackendSession, useStore', () => {
-    expect(registerModalSource).toContain("import { register } from '../lib/backendApi'")
+  it('RegisterModal imports register, verifyEmail, resendVerifyCode, bootstrapBackendSession, useStore', () => {
+    expect(registerModalSource).toMatch(/import \{ register, verifyEmail, resendVerifyCode \} from ['"]\.\.\/lib\/backendApi['"]/)
     expect(registerModalSource).toContain("import { bootstrapBackendSession, useStore } from '../store'")
   })
 

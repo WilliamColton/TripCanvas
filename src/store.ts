@@ -615,6 +615,23 @@ export function getChangelogDismissKey(changelog: ChangelogEntry): string {
   return `${changelog.id}:${changelog.updatedAt}`
 }
 
+function templateCustomInputKey(key: string) {
+  return `${key}__custom`
+}
+
+function resolveTemplateInputs(template: PromptTemplate, inputs: PromptTemplateInputs) {
+  const resolved: PromptTemplateInputs = {}
+  for (const field of template.fieldSchema || []) {
+    const value = inputs[field.key]
+    if (field.type === 'select' && value === '自定义') {
+      resolved[field.key] = inputs[templateCustomInputKey(field.key)]
+    } else {
+      resolved[field.key] = value
+    }
+  }
+  return resolved
+}
+
 export async function loadChangelogEntries() {
   const { changelogs } = await getPublicChangelogEntries()
   useStore.getState().setChangelogEntries(changelogs)
@@ -642,9 +659,11 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
       return
     }
     for (const field of selectedTemplate.fieldSchema || []) {
-      const value = templateInputs[field.key]
+      const value = field.type === 'select' && templateInputs[field.key] === '自定义'
+        ? templateInputs[templateCustomInputKey(field.key)]
+        : templateInputs[field.key]
       const isEmpty = value == null || (typeof value === 'string' && !value.trim()) || (Array.isArray(value) && value.length === 0)
-      if (field.required && isEmpty) {
+      if ((field.required || (field.type === 'select' && templateInputs[field.key] === '自定义')) && isEmpty) {
         showToast(`请填写${field.label || field.key}`, 'error')
         return
       }
@@ -710,8 +729,10 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
 
   // Show task UI immediately — uploads happen below
   const taskId = genId()
+  const resolvedTemplateInputs = isTemplateMode && selectedTemplate ? resolveTemplateInputs(selectedTemplate, templateInputs) : templateInputs
+  const taskCreditCost = normalizedParams.n * (isTemplateMode ? Math.max(1, selectedTemplate?.creditCost || 1) : 1)
   const displayPrompt = isTemplateMode
-    ? `${selectedTemplate?.title || '旅行模板'} · ${Object.values(templateInputs).filter((value) => value != null && String(value).trim()).slice(0, 3).join(' · ') || prompt.trim() || '待生成'}`
+    ? `${selectedTemplate?.title || '旅行模板'} · ${Object.values(resolvedTemplateInputs).filter((value) => value != null && String(value).trim()).slice(0, 3).join(' · ') || prompt.trim() || '待生成'}`
     : prompt.trim()
   const task: TaskRecord = {
     id: taskId,
@@ -722,7 +743,8 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     templateResolutionName: isTemplateMode ? selectedResolution?.name || '' : undefined,
     templateTitle: isTemplateMode ? selectedTemplate?.title : undefined,
     templateVersion: isTemplateMode ? selectedTemplate?.version : undefined,
-    templateInputs: isTemplateMode ? { ...templateInputs } : undefined,
+    creditCost: taskCreditCost,
+    templateInputs: isTemplateMode ? { ...resolvedTemplateInputs } : undefined,
     userPrompt: isTemplateMode ? prompt.trim() : prompt.trim(),
     params: normalizedParams,
     inputImageIds: orderedInputImages.map((i) => i.id),

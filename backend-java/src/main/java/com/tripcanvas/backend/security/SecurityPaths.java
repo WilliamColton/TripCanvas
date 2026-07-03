@@ -13,6 +13,8 @@ public final class SecurityPaths {
         "/api/auth/login",
         "/api/auth/login-password",
         "/api/auth/register",
+        "/api/auth/verify-email",
+        "/api/auth/resend-verify-code",
         ADMIN_LOGIN
     };
 
@@ -35,6 +37,8 @@ public final class SecurityPaths {
             || "/api/auth/login".equals(path)
             || "/api/auth/login-password".equals(path)
             || "/api/auth/register".equals(path)
+            || "/api/auth/verify-email".equals(path)
+            || "/api/auth/resend-verify-code".equals(path)
             || ADMIN_LOGIN.equals(path)
             || path.startsWith("/api/template-preview-images/");
     }

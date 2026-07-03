@@ -90,6 +90,7 @@ export default function FieldSchemaEditor({ promptBody, fields, onChange }: Prop
       {syncedFields.map((field, index) => {
         const collapsed = collapsedSet.has(field.key)
         const showsOptions = field.type === 'select' || field.type === 'multi_select'
+        const showsAllowCustom = field.type === 'select'
         return (
           <div key={field.key} className="rounded-xl border border-gray-200/70 bg-white/70 dark:border-white/[0.08] dark:bg-white/[0.03]">
             <button
@@ -113,7 +114,11 @@ export default function FieldSchemaEditor({ promptBody, fields, onChange }: Prop
                     类型
                     <Select
                       value={field.type}
-                      onChange={(value) => updateField(index, { type: value as PromptTemplateField['type'], options: value === 'select' || value === 'multi_select' ? (field.options?.length ? field.options : ['']) : undefined })}
+                      onChange={(value) => updateField(index, {
+                        type: value as PromptTemplateField['type'],
+                        options: value === 'select' || value === 'multi_select' ? (field.options?.length ? field.options : ['']) : undefined,
+                        allowCustom: value === 'select' ? field.allowCustom : undefined,
+                      })}
                       options={fieldTypeOptions}
                       className={commonClass}
                     />
@@ -141,6 +146,12 @@ export default function FieldSchemaEditor({ promptBody, fields, onChange }: Prop
                       <Switch checked={field.required !== false} onCheckedChange={(checked) => updateField(index, { required: checked })} className="scale-75" />
                       必填
                     </label>
+                    {showsAllowCustom && (
+                      <label className="flex items-center gap-1.5 text-[11px] text-gray-500">
+                        <Switch checked={Boolean(field.allowCustom)} onCheckedChange={(checked) => updateField(index, { allowCustom: checked })} className="scale-75" />
+                        允许自定义
+                      </label>
+                    )}
                   </div>
                 </div>
                 {showsOptions && (

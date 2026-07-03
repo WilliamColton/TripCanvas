@@ -75,6 +75,59 @@ public class ImageServiceImpl implements ImageService {
     }
 
     @Override
+    public UploadPrepare prepareUpload(String userId, String sha256, String mime, long size, String source) {
+        if (sha256 != null && !sha256.isBlank()) {
+            ImageEntity existing = imageMapper.selectOneByQuery(
+                FlexQuery.and(FlexQuery.eq("user_id", userId), "sha256 = ?", sha256)
+            );
+            if (existing != null) {
+                return new UploadPrepare(true, false, existing.getId(), null, null, toResponseWithUrl(existing));
+            }
+        }
+        String id = Ids.generate();
+        String ext = MIME_EXT.getOrDefault(mime == null ? "" : mime, "png");
+        String key = buildKey(userId, id, ext);
+        String uploadUrl = storage.presignPut(key, mime, size);
+        if (uploadUrl == null) {
+            // 本地模式不支持直传，前端回退 multipart。
+            return new UploadPrepare(false, true, null, null, null, null);
+        }
+        return new UploadPrepare(false, false, id, key, uploadUrl, null);
+    }
+
+    @Override
+    public ImageResponse commitUpload(String userId, String id, String key, String sha256, String mime, long size, String source) {
+        ImageEntity existing = imageMapper.selectOneById(id);
+        if (existing != null) {
+            return toResponseWithUrl(existing);
+        }
+        long now = Times.nowMillis();
+        ImageEntity image = new ImageEntity()
+            .setId(id)
+            .setUserId(userId)
+            .setFilePath(key)
+            .setMime(mime)
+            .setSize(size)
+            .setSha256(sha256)
+            .setSource(parseSource(source))
+            .setCreatedAt(now)
+            .setStorageType(storage.type())
+            .setStorageKey(key)
+            .setPublicUrl(storage.accessUrl(key));
+        try {
+            imageMapper.insert(image);
+        } catch (Exception e) {
+            // 前端可能重复 commit，或 id 冲突；返回已存在记录。
+            ImageEntity retry = imageMapper.selectOneById(id);
+            if (retry != null) {
+                return toResponseWithUrl(retry);
+            }
+            throw ApiException.internal("图片保存失败");
+        }
+        return toResponseWithUrl(image);
+    }
+
+    @Override
     public ImageFile readImageFileForUser(String userId, String imageId) {
         ImageEntity image = imageMapper.selectOneByQuery(
             FlexQuery.and(FlexQuery.eq("id", imageId), "user_id = ?", userId)
@@ -107,6 +160,17 @@ public class ImageServiceImpl implements ImageService {
             throw ApiException.notFound("图片不存在");
         }
         return readBytesOf(image);
+    }
+
+    @Override
+    public ImageBytes readBytesAndMimeForUser(String userId, String imageId) {
+        ImageEntity image = imageMapper.selectOneByQuery(
+            FlexQuery.and(FlexQuery.eq("id", imageId), "user_id = ?", userId)
+        );
+        if (image == null) {
+            throw ApiException.notFound("图片不存在");
+        }
+        return new ImageBytes(readBytesOf(image), image.getMime());
     }
 
     @Override

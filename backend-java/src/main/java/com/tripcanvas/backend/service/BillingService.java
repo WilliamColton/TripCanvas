@@ -6,7 +6,7 @@ import java.util.List;
 public interface BillingService {
     void recordBillingForSuccessfulImages(BillingBatchInput input);
 
-    void finalizeSuccessfulTask(String userId, TaskRecordResponse task, BillingBatchInput billingInput, int outputCount);
+    void finalizeSuccessfulTask(String userId, TaskRecordResponse task, BillingBatchInput billingInput, int creditCost);
 
     record BillingImageInput(
         String outputImageId,

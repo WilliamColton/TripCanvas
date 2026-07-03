@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useStore, getCachedImage, ensureImageCached } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
-import { getTemplatePreviewImageUrl } from '../lib/backendApi'
+import { getCachedTemplatePreviewUrl, getTemplatePreviewImageUrl, resolveTemplatePreviewUrl } from '../lib/backendApi'
 import { parseTemplatePreviewLightboxId } from '../lib/lightboxIds'
 
 const MIN_SCALE = 1
@@ -32,19 +32,30 @@ export default function Lightbox() {
       setSrc('')
       return
     }
+    let cancelled = false
     const templatePreviewImageId = parseTemplatePreviewLightboxId(lightboxImageId)
     if (templatePreviewImageId) {
-      setSrc(getTemplatePreviewImageUrl(templatePreviewImageId))
-      return
+      const cached = getCachedTemplatePreviewUrl(templatePreviewImageId)
+      if (cached) {
+        setSrc(cached)
+      } else {
+        // 先用固定 302 路径占位，异步解析出稳定直链后替换。
+        setSrc(getTemplatePreviewImageUrl(templatePreviewImageId))
+        resolveTemplatePreviewUrl(templatePreviewImageId).then((url) => {
+          if (!cancelled && url) setSrc(url)
+        })
+      }
+      return () => { cancelled = true }
     }
     const cached = getCachedImage(lightboxImageId)
     if (cached) {
       setSrc(cached)
     } else {
       ensureImageCached(lightboxImageId).then((url) => {
-        if (url) setSrc(url)
+        if (!cancelled && url) setSrc(url)
       })
     }
+    return () => { cancelled = true }
   }, [lightboxImageId])
 
   // 遮罩图加载

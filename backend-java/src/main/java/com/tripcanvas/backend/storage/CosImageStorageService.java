@@ -102,13 +102,24 @@ public class CosImageStorageService implements ImageStorageService, AutoCloseabl
         return url == null ? null : url.toString();
     }
 
-    @Override
+@Override
     public void delete(String key) {
         try {
             cosClient.deleteObject(cfg.bucket(), key);
         } catch (CosClientException e) {
             log.warn("COS 删除失败 key={}", key, e);
         }
+    }
+
+    @Override
+    public String presignPut(String key, String mime, long size) {
+        // 10 分钟有效，足够浏览器直传完成；签名不绑定 content-type，前端 PUT 时随 blob.type 即可。
+        Date expiration = new Date(System.currentTimeMillis() + 10 * 60 * 1000L);
+        GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(
+            cfg.bucket(), key, com.qcloud.cos.http.HttpMethodName.PUT
+        ).withExpiration(expiration);
+        URL url = cosClient.generatePresignedUrl(request);
+        return url == null ? null : url.toString();
     }
 
     @Override

@@ -1,6 +1,10 @@
 package com.tripcanvas.backend.service.impl;
 
+import com.alicp.jetcache.Cache;
+import com.alicp.jetcache.CacheManager;
+import com.tripcanvas.backend.cache.CacheNames;
 import com.tripcanvas.backend.common.exception.ApiException;
+import com.tripcanvas.backend.config.JetCacheConfigs;
 import com.tripcanvas.backend.dto.request.ChangelogRequest;
 import com.tripcanvas.backend.dto.response.ChangelogEntryResponse;
 import com.tripcanvas.backend.entity.ChangelogEntryEntity;
@@ -10,6 +14,7 @@ import com.tripcanvas.backend.structmapper.ChangelogDtoMapper;
 import com.tripcanvas.backend.util.FlexQuery;
 import com.tripcanvas.backend.util.Ids;
 import com.tripcanvas.backend.util.Times;
+import jakarta.annotation.PostConstruct;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -19,17 +24,48 @@ import org.springframework.stereotype.Service;
 public class ChangelogServiceImpl implements ChangelogService {
     private final ChangelogEntryMapper mapper;
     private final ChangelogDtoMapper dtoMapper;
+    private final CacheManager cacheManager;
+
+    private Cache<String, List<ChangelogEntryResponse>> changelogListCache;
+    private Cache<String, ChangelogEntryResponse> changelogLatestCache;
+
+    @PostConstruct
+    private void initCaches() {
+        changelogListCache = cacheManager.getOrCreateCache(
+            JetCacheConfigs.local(CacheNames.CHANGELOG_LIST, CacheNames.SINGLE_ENTRY_LIMIT)
+        );
+        changelogLatestCache = cacheManager.getOrCreateCache(
+            JetCacheConfigs.local(CacheNames.CHANGELOG_LATEST, CacheNames.SINGLE_ENTRY_LIMIT)
+        );
+    }
 
     @Override
     public List<ChangelogEntryResponse> list(boolean includeDrafts) {
+        // public 与 admin 必须分 key，避免草稿泄漏到 public 接口
+        String key = includeDrafts ? CacheNames.KEY_CHANGELOG_ADMIN : CacheNames.KEY_CHANGELOG_PUBLIC;
+        List<ChangelogEntryResponse> cached = changelogListCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
         var query = FlexQuery.orderBy(includeDrafts ? com.mybatisflex.core.query.QueryWrapper.create() : FlexQuery.eq("published", 1), "published_at DESC, updated_at DESC, created_at DESC");
-        return dtoMapper.toResponses(mapper.selectListByQuery(query));
+        List<ChangelogEntryResponse> response = List.copyOf(dtoMapper.toResponses(mapper.selectListByQuery(query)));
+        changelogListCache.put(key, response);
+        return response;
     }
 
     @Override
     public ChangelogEntryResponse latestPublished() {
+        ChangelogEntryResponse cached = changelogLatestCache.get(CacheNames.KEY_CHANGELOG_LATEST);
+        if (cached != null) {
+            return cached;
+        }
         var list = mapper.selectListByQuery(FlexQuery.orderBy(FlexQuery.eq("published", 1), "published_at DESC, updated_at DESC, created_at DESC"));
-        return list.isEmpty() ? null : dtoMapper.toResponse(list.get(0));
+        // 空结果不缓存，避免 null 无法与“未命中”区分导致每次穿透
+        ChangelogEntryResponse response = list.isEmpty() ? null : dtoMapper.toResponse(list.get(0));
+        if (response != null) {
+            changelogLatestCache.put(CacheNames.KEY_CHANGELOG_LATEST, response);
+        }
+        return response;
     }
 
     @Override
@@ -46,7 +82,9 @@ public class ChangelogServiceImpl implements ChangelogService {
             .setUpdatedAt(now)
             .setPublishedAt(input.published() ? now : null);
         mapper.insert(entity);
-        return dtoMapper.toResponse(entity);
+        ChangelogEntryResponse response = dtoMapper.toResponse(entity);
+        invalidateChangelogCache();
+        return response;
     }
 
     @Override
@@ -66,7 +104,9 @@ public class ChangelogServiceImpl implements ChangelogService {
             entity.setPublishedAt(now);
         }
         mapper.update(entity);
-        return dtoMapper.toResponse(entity);
+        ChangelogEntryResponse response = dtoMapper.toResponse(entity);
+        invalidateChangelogCache();
+        return response;
     }
 
     @Override
@@ -75,6 +115,13 @@ public class ChangelogServiceImpl implements ChangelogService {
         if (affected == 0) {
             throw ApiException.notFound("更新日志不存在");
         }
+        invalidateChangelogCache();
+    }
+
+    private void invalidateChangelogCache() {
+        changelogListCache.remove(CacheNames.KEY_CHANGELOG_PUBLIC);
+        changelogListCache.remove(CacheNames.KEY_CHANGELOG_ADMIN);
+        changelogLatestCache.remove(CacheNames.KEY_CHANGELOG_LATEST);
     }
 
     private NormalizedInput normalize(ChangelogRequest request) {

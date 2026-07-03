@@ -17,6 +17,7 @@ public record PromptTemplateResponse(
     String previewImageId,
     String promptBody,
     String negativePrompt,
+    int creditCost,
     String assemblyMode,
     String status,
     int sortOrder,

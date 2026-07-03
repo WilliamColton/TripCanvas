@@ -1,11 +1,15 @@
 package com.tripcanvas.backend.service.impl;
 
+import com.alicp.jetcache.Cache;
+import com.alicp.jetcache.CacheManager;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tripcanvas.backend.cache.CacheNames;
 import com.tripcanvas.backend.common.exception.ApiException;
+import com.tripcanvas.backend.config.JetCacheConfigs;
 import com.tripcanvas.backend.config.TripCanvasProperties;
 import com.tripcanvas.backend.dto.request.AdminRequests;
 import com.tripcanvas.backend.dto.response.ApiEndpointResponse;
@@ -22,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,12 +39,30 @@ public class AppConfigServiceImpl implements AppConfigService {
     private static final long MONEY_SCALE = 10000L;
 
     private final TripCanvasProperties properties;
+    private final CacheManager cacheManager;
     private final ObjectMapper objectMapper = JsonUtils.mapper();
     private volatile RuntimeConfig config;
 
+    private Cache<String, AppConfigResponse> publicConfigCache;
+
+    @PostConstruct
+    private void initCaches() {
+        publicConfigCache = cacheManager.getOrCreateCache(
+            JetCacheConfigs.local(CacheNames.PUBLIC_CONFIG, CacheNames.SINGLE_ENTRY_LIMIT)
+        );
+    }
+
     @PostConstruct
     public void load() throws IOException {
-        Files.createDirectories(properties.configFile().toAbsolutePath().normalize().getParent());
+        Path configPath = properties.configFile().toAbsolutePath().normalize();
+        Files.createDirectories(configPath.getParent());
+        if (!Files.exists(configPath)) {
+            Path example = configPath.resolveSibling("config.example.json");
+            if (Files.exists(example)) {
+                Files.copy(example, configPath);
+                log.warn("未找到 config.json，已从 config.example.json 复制一份到 {}。请修改其中的敏感配置（jwtSecret / adminApikey / resendApiKey / apiEndpoints[].apiKey 等）后再使用。", configPath);
+            }
+        }
         RuntimeConfig loaded = defaultConfig();
         Map<String, JsonNode> raw = readRawConfig();
         if (!raw.isEmpty()) {
@@ -72,12 +95,69 @@ public class AppConfigServiceImpl implements AppConfigService {
         if ("change-me-admin-apikey".equals(loaded.adminApikey)) {
             log.warn("AdminApikey 仍为默认值，请立即更改为强随机字符串");
         }
+        if ("change-me-resend".equals(loaded.resendApiKey)) {
+            log.warn("ResendApiKey 仍为默认值，邮箱注册将无法发送验证邮件，请在 config.json 中配置 resendApiKey");
+        }
+    }
+
+    @Override
+    public MailConfig mailConfig() {
+        RuntimeConfig c = config;
+        int ttl = c.emailVerificationTtlSeconds <= 0 ? 600 : c.emailVerificationTtlSeconds;
+        return new MailConfig(c.resendApiKey, c.resendFrom, ttl);
+    }
+
+    @Override
+    public EmailConfig emailConfig() {
+        RuntimeConfig c = config;
+        return new EmailConfig(c.allowedEmailSuffixes == null ? List.of() : List.copyOf(c.allowedEmailSuffixes));
+    }
+
+    @Override
+    public synchronized EmailConfig setEmailConfig(AdminRequests.EmailConfigRequest request) {
+        List<String> normalized = new ArrayList<>();
+        if (request.allowedSuffixes() != null) {
+            for (String raw : request.allowedSuffixes()) {
+                if (raw == null) {
+                    continue;
+                }
+                String s = raw.trim().toLowerCase(Locale.ROOT);
+                if (s.isEmpty()) {
+                    continue;
+                }
+                if (!s.startsWith("@")) {
+                    s = "@" + s;
+                }
+                if (!normalized.contains(s)) {
+                    normalized.add(s);
+                }
+            }
+        }
+        RuntimeConfig next = config.copy();
+        next.allowedEmailSuffixes = normalized;
+        write(next);
+        config = next;
+        publicConfigCache.remove(CacheNames.KEY_PUBLIC_CONFIG);
+        return new EmailConfig(List.copyOf(normalized));
     }
 
     @Override
     public AppConfigResponse publicConfig() {
+        AppConfigResponse cached = publicConfigCache.get(CacheNames.KEY_PUBLIC_CONFIG);
+        if (cached != null) {
+            return cached;
+        }
         RuntimeConfig c = config;
-        return new AppConfigResponse(c.codexCli, c.apiMode, c.model, c.timeout, Boolean.TRUE.equals(c.inviteEnabled));
+        AppConfigResponse response = new AppConfigResponse(
+            c.codexCli,
+            c.apiMode,
+            c.model,
+            c.timeout,
+            Boolean.TRUE.equals(c.inviteEnabled),
+            c.allowedEmailSuffixes == null ? List.of() : List.copyOf(c.allowedEmailSuffixes)
+        );
+        publicConfigCache.put(CacheNames.KEY_PUBLIC_CONFIG, response);
+        return response;
     }
 
     @Override
@@ -204,6 +284,7 @@ public class AppConfigServiceImpl implements AppConfigService {
         next.inviteEnabled = enabled;
         write(next);
         config = next;
+        publicConfigCache.remove(CacheNames.KEY_PUBLIC_CONFIG);
         return inviteConfig();
     }
 
@@ -384,6 +465,10 @@ public class AppConfigServiceImpl implements AppConfigService {
         public int inviteInviteeReward;
         public int inviteDefaultQuota;
         public Boolean inviteEnabled;
+        public String resendApiKey;
+        public String resendFrom;
+        public int emailVerificationTtlSeconds;
+        public List<String> allowedEmailSuffixes = new ArrayList<>();
 
         public void applyDefaults(String root) {
             rootDir = rootDir == null ? root : rootDir;
@@ -397,6 +482,10 @@ public class AppConfigServiceImpl implements AppConfigService {
             timeout = timeout == 0 ? 6000 : timeout;
             inviteEnabled = inviteEnabled == null ? Boolean.TRUE : inviteEnabled;
             salePricingMode = salePricingMode == null ? "unified" : salePricingMode;
+            resendApiKey = resendApiKey == null ? "change-me-resend" : resendApiKey;
+            resendFrom = resendFrom == null ? "精品旅图 <noreply@jingpinlutu.com>" : resendFrom;
+            emailVerificationTtlSeconds = emailVerificationTtlSeconds == 0 ? 600 : emailVerificationTtlSeconds;
+            allowedEmailSuffixes = allowedEmailSuffixes == null ? new ArrayList<>() : allowedEmailSuffixes;
         }
 
         public RuntimeConfig copy() {
@@ -424,6 +513,10 @@ public class AppConfigServiceImpl implements AppConfigService {
             c.inviteInviteeReward = inviteInviteeReward;
             c.inviteDefaultQuota = inviteDefaultQuota;
             c.inviteEnabled = inviteEnabled;
+            c.resendApiKey = resendApiKey;
+            c.resendFrom = resendFrom;
+            c.emailVerificationTtlSeconds = emailVerificationTtlSeconds;
+            c.allowedEmailSuffixes = new ArrayList<>(allowedEmailSuffixes);
             return c;
         }
 
