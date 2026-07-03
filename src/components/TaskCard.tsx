@@ -35,6 +35,13 @@ function durationText(task: TaskRecord, now: number) {
   return `${mm}:${ss}`
 }
 
+function statusBadge(task: TaskRecord) {
+  if (task.status === 'running') return { text: '生成中', className: 'bg-blue-500 text-white' }
+  if (task.status === 'queued') return { text: '排队中', className: 'bg-amber-400 text-white' }
+  if (task.status === 'error') return { text: '失败', className: 'bg-red-500 text-white' }
+  return { text: '已完成', className: 'bg-emerald-500 text-white' }
+}
+
 export default function TaskCard({
   task,
   onDelete,
@@ -144,11 +151,12 @@ export default function TaskCard({
   const resolutionName = task.templateResolutionName || ''
   const title = task.prompt?.split('·')[0]?.trim() || '标题'
   const elapsed = durationText(task, now)
+  const badge = statusBadge(task)
 
   return (
-    <div className="relative rounded-md">
+    <div className="relative rounded-2xl">
       <div
-        className={`absolute inset-0 flex items-center rounded-md transition-opacity duration-200 pointer-events-none ${
+        className={`absolute inset-0 flex items-center rounded-2xl transition-opacity duration-200 pointer-events-none ${
           isSwiping || swipeOffset || swipeActionActive ? 'opacity-100' : 'opacity-0'
         } ${swipeBgClass} ${swipeOffset > 0 ? 'justify-start pl-6' : 'justify-end pr-6'}`}
       >
@@ -160,7 +168,7 @@ export default function TaskCard({
       </div>
 
       <article
-        className={`group relative h-[176px] cursor-pointer overflow-hidden rounded-md border bg-white shadow-[0_2px_8px_rgba(15,23,42,0.25)] transition hover:-translate-y-0.5 hover:shadow-[0_5px_14px_rgba(15,23,42,0.22)] dark:bg-gray-950 ${
+        className={`group relative h-[202px] cursor-pointer overflow-hidden rounded-2xl border bg-white shadow-[0_2px_7px_rgba(15,23,42,0.08)] transition hover:-translate-y-px hover:shadow-[0_4px_10px_rgba(15,23,42,0.09)] dark:bg-gray-950 ${
           task.status === 'running'
             ? 'border-blue-400 generating'
             : task.status === 'queued'
@@ -184,41 +192,45 @@ export default function TaskCard({
         onTouchCancel={handleTouchCancel}
       >
         {isSelected && (
-          <div className="absolute right-1.5 top-1.5 z-20 flex h-5 w-5 items-center justify-center rounded-full bg-blue-500 shadow-sm">
+          <div className="absolute right-2 top-2 z-20 flex h-6 w-6 items-center justify-center rounded-full bg-blue-500 shadow-sm">
             <Check className="h-3 w-3 text-white" strokeWidth={3} />
           </div>
         )}
 
-        <div className="relative h-[112px] bg-white dark:bg-white/[0.03]">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (task.outputImages?.[0]) setLightboxImageId(task.outputImages[0], task.outputImages)
-            }}
-            disabled={!task.outputImages?.length}
-            className="absolute left-1.5 top-1.5 z-10 rounded-sm bg-white/80 p-0.5 text-black transition hover:bg-white disabled:opacity-40 dark:bg-gray-950/70 dark:text-white"
-            title="放大查看"
-          >
-            <Expand className="h-4 w-4" strokeWidth={3} />
-          </button>
+        <div className="relative h-[126px] bg-white dark:bg-white/[0.03]">
+          {!isSelected && (
+            <>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (task.outputImages?.[0]) setLightboxImageId(task.outputImages[0], task.outputImages)
+                }}
+                disabled={!task.outputImages?.length}
+                className="absolute left-2 top-2 z-10 rounded-lg bg-white/85 p-1.5 text-black shadow-sm transition hover:bg-white disabled:opacity-40 dark:bg-gray-950/70 dark:text-white"
+                title="放大查看"
+              >
+                <Expand className="h-4 w-4" strokeWidth={3} />
+              </button>
 
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (!thumbSrc) return
-              const link = document.createElement('a')
-              link.href = thumbSrc
-              link.download = `${task.id}.png`
-              link.click()
-            }}
-            disabled={!thumbSrc}
-            className="absolute right-1.5 top-1.5 z-10 rounded-sm bg-white/80 p-0.5 text-black transition hover:bg-white disabled:opacity-40 dark:bg-gray-950/70 dark:text-white"
-            title="下载图片"
-          >
-            <Download className="h-4 w-4" strokeWidth={3} />
-          </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (!thumbSrc) return
+                  const link = document.createElement('a')
+                  link.href = thumbSrc
+                  link.download = `${task.id}.png`
+                  link.click()
+                }}
+                disabled={!thumbSrc}
+                className="absolute right-2 top-2 z-10 rounded-lg bg-white/85 p-1.5 text-black shadow-sm transition hover:bg-white disabled:opacity-40 dark:bg-gray-950/70 dark:text-white"
+                title="下载图片"
+              >
+                <Download className="h-4 w-4" strokeWidth={3} />
+              </button>
+            </>
+          )}
 
           {task.status === 'running' && (
             <div className="flex h-full flex-col items-center justify-center gap-2">
@@ -248,24 +260,31 @@ export default function TaskCard({
           )}
         </div>
 
-        <div className="relative h-[64px] px-1.5 py-1.5 pr-8 text-[12px] font-black leading-[1.35] text-black dark:text-gray-100">
-          <div className="truncate">{title}</div>
-          <div className="truncate">{resolutionName}</div>
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="min-w-0 truncate">创建于{formatDateTime(task.createdAt)}</span>
-            <span className="shrink-0 tabular-nums">{elapsed}</span>
+        <div className="relative h-[76px] px-3 py-2.5 pr-10 text-[12px] leading-[1.35] text-black dark:text-gray-100">
+          <div className="truncate text-sm font-black">{title}</div>
+          <div className="mt-1 flex min-w-0 items-center gap-2">
+            {resolutionName && <span className="min-w-0 truncate rounded-full bg-[#edf6ff] px-2 py-0.5 text-[10px] font-bold text-[#98a2b3] dark:bg-white/[0.06] dark:text-gray-400">{resolutionName}</span>}
+            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${badge.className}`}>
+              {badge.text}
+            </span>
+            <span className="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 font-mono text-[10px] font-bold text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">耗时：{elapsed}</span>
+          </div>
+          <div className="mt-1 truncate text-[11px] font-bold text-[#98a2b3] dark:text-gray-500">
+            创建于 {formatDateTime(task.createdAt)}
           </div>
 
-          <div className="absolute bottom-1 right-1" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              onClick={onDelete}
-              className="flex h-6 w-6 items-center justify-center rounded-sm text-black transition hover:bg-red-50 hover:text-red-500 dark:text-gray-100 dark:hover:bg-red-500/10 dark:hover:text-red-400"
-              title="删除记录"
-            >
-              <Trash2 className="h-4 w-4" strokeWidth={3} />
-            </button>
-          </div>
+          {!isSelected && (
+            <div className="absolute bottom-2 right-2" onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                onClick={onDelete}
+                className="flex h-8 w-8 items-center justify-center rounded-xl text-black transition hover:bg-red-50 hover:text-red-500 dark:text-gray-100 dark:hover:bg-red-500/10 dark:hover:text-red-400"
+                title="删除记录"
+              >
+                <Trash2 className="h-4 w-4" strokeWidth={3} />
+              </button>
+            </div>
+          )}
         </div>
       </article>
     </div>

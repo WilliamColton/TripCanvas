@@ -62,7 +62,7 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={300}>
       <Header />
-      <main data-home-main className="safe-area-x mx-auto grid min-h-[calc(100vh-6.25rem)] w-full max-w-[1920px] gap-4 px-6 py-6 lg:grid-cols-[minmax(420px,630px)_minmax(0,1fr)] 2xl:grid-cols-[630px_minmax(0,1fr)]">
+      <main data-home-main className="safe-area-x mx-auto grid min-h-[calc(100vh-5rem)] w-full max-w-[1920px] gap-5 px-6 py-5 lg:grid-cols-[minmax(420px,620px)_minmax(0,1fr)] xl:gap-6 2xl:grid-cols-[620px_minmax(0,1fr)]">
         <InputBar />
         <TaskGrid />
       </main>

@@ -7,7 +7,7 @@ import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyBlobToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { Button } from './ui/button'
-import { Dialog, DialogContent } from './ui/dialog'
+import { Dialog, DialogContent, DialogTitle } from './ui/dialog'
 
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
@@ -264,8 +264,10 @@ export default function DetailModal() {
       <DialogContent
         data-no-drag-select
         hideClose
+        aria-describedby={undefined}
         className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col md:flex-row p-0 gap-0"
       >
+        <DialogTitle className="sr-only">任务详情</DialogTitle>
         <div className="flex h-14 items-center justify-end px-4 md:hidden">
           <button
             onClick={() => setDetailTaskId(null)}
