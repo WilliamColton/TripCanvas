@@ -472,8 +472,16 @@ function LightboxInner({ src, maskPreviewSrc, onClose, showNav, currentIndex, to
       onClick={onClick}
       onDoubleClick={onDoubleClick}
     >
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-md animate-fade-in" />
-      <div className="relative animate-zoom-in">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/70 backdrop-blur-md animate-fade-in"
+        aria-label="关闭大图"
+        onClick={(e) => {
+          e.stopPropagation()
+          onClose()
+        }}
+      />
+      <div className="relative animate-zoom-in" onClick={(e) => e.stopPropagation()}>
         <div
           className="relative flex items-center justify-center"
           style={{

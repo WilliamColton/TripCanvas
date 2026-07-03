@@ -21,15 +21,15 @@ export default function Header() {
   const accountLabel = authUser?.username || authUser?.label || '未登录'
 
   return (
-    <header className="safe-area-top sticky top-0 z-40 border-b border-[#dfe7f2] bg-[#edf6ff]/95 shadow-sm backdrop-blur dark:border-white/[0.08] dark:bg-gray-950/90">
-      <div className="safe-area-x safe-header-inner mx-auto flex h-[6.25rem] max-w-[1920px] items-center justify-between gap-4 px-7">
-        <div className="flex min-w-0 items-center gap-6">
+    <header className="safe-area-top sticky top-0 z-40 border-b border-[#dfe7f2] bg-[#edf6ff]/95 shadow-[0_1px_18px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-950/90">
+      <div className="safe-area-x safe-header-inner mx-auto flex h-20 max-w-[1920px] items-center justify-between gap-4 px-7 sm:h-[5.25rem]">
+        <div className="flex min-w-0 items-center gap-4 lg:gap-6">
           <picture className="block shrink-0">
             <source media="(max-width: 640px)" srcSet="./jingpin-logo-vertical.png" />
             <img
               src="./jingpin-logo-horizontal.png"
               alt="精品旅图"
-              className="h-[72px] w-auto max-w-[430px] object-contain sm:h-[76px] lg:max-w-[520px]"
+              className="h-14 w-auto max-w-[260px] object-contain sm:h-16 sm:max-w-[360px] lg:max-w-[460px]"
             />
           </picture>
           <p className="hidden whitespace-nowrap text-base font-bold text-black dark:text-gray-100 md:block">
@@ -45,13 +45,13 @@ export default function Header() {
             </button>
           )}
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
           <button
             onClick={() => setShowHelp(true)}
-            className="mr-2 hidden flex-col items-center justify-center rounded-md px-3 py-1 text-black transition-colors hover:bg-white/70 dark:text-gray-100 dark:hover:bg-white/[0.08] sm:flex"
+            className="mr-1 hidden flex-col items-center justify-center rounded-xl px-3 py-1.5 text-black transition-colors hover:bg-white/70 dark:text-gray-100 dark:hover:bg-white/[0.08] sm:flex"
             title="使用说明"
           >
-            <BookOpen className="h-10 w-10" strokeWidth={2.4} />
+            <BookOpen className="h-7 w-7" strokeWidth={2.4} />
             <span className="-mt-0.5 text-xs font-semibold">使用说明</span>
           </button>
           {version && (

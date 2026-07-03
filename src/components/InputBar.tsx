@@ -255,7 +255,7 @@ export default function InputBar() {
   }
 
   const inputClass =
-    'h-9 w-full rounded-md border border-transparent bg-white px-3 text-sm font-semibold text-gray-900 placeholder:text-[#9aa3b1] shadow-[0_1px_10px_rgba(31,41,55,0.16)] outline-none transition focus:border-blue-300 focus:ring-2 focus:ring-blue-200/70 dark:bg-white/[0.06] dark:text-gray-100 dark:placeholder:text-gray-500'
+    'h-10 w-full rounded-xl border border-transparent bg-white px-3 text-sm font-semibold text-gray-900 placeholder:text-[#9aa3b1] shadow-[0_1px_5px_rgba(31,41,55,0.09)] outline-none transition focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-200/70 dark:bg-white/[0.06] dark:text-gray-100 dark:placeholder:text-gray-500'
   const labelClass = 'grid min-w-0 grid-cols-1 items-start gap-2 text-base font-bold text-black sm:grid-cols-[var(--field-label-width)_minmax(0,1fr)] sm:items-center dark:text-gray-100'
 
   const setLabelMeasureRef = useCallback(
@@ -418,18 +418,21 @@ export default function InputBar() {
       <section
         data-input-bar
         data-no-drag-select
-        className="flex min-h-[calc(100vh-9.25rem)] flex-col rounded-md bg-white p-6 shadow-[0_1px_8px_rgba(15,23,42,0.2)] dark:bg-gray-950 dark:ring-1 dark:ring-white/[0.08]"
+        className="flex min-h-[calc(100vh-8.5rem)] flex-col rounded-3xl border border-white/75 bg-white/[0.82] p-5 shadow-[0_18px_36px_-22px_rgba(15,23,42,0.28),0_6px_18px_-14px_rgba(15,23,42,0.18)] backdrop-blur dark:border-white/[0.08] dark:bg-gray-950/[0.78] dark:shadow-[0_18px_36px_-22px_rgba(0,0,0,0.55),0_6px_18px_-14px_rgba(0,0,0,0.35)] sm:p-6"
       >
-        <div className="mb-6 flex items-start justify-between gap-4">
-          <h2 className="text-2xl font-black text-black dark:text-gray-100">板式</h2>
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-black text-black dark:text-gray-100">板式</h2>
+            <p className="mt-1 text-sm font-bold text-[#98a2b3] dark:text-gray-400">选择模板、补充内容并生成旅图</p>
+          </div>
           <div className="whitespace-nowrap text-2xl font-black text-black dark:text-gray-100">
             剩余积分：{remainingCredits}
           </div>
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-[240px_minmax(0,1fr)]">
+        <div className="grid gap-5 rounded-2xl border border-white/60 bg-white/30 p-4 backdrop-blur dark:border-white/[0.08] dark:bg-white/[0.03] xl:grid-cols-[230px_minmax(0,1fr)]">
           <div>
-            <div className="mb-5 text-base font-bold text-black dark:text-gray-100">板式参考</div>
+            <div className="mb-3 text-sm font-black text-black dark:text-gray-100">板式参考</div>
             {isTemplateMode ? (
               <button
                 type="button"
@@ -439,7 +442,7 @@ export default function InputBar() {
                   const lightboxId = getTemplatePreviewLightboxId(selectedTemplate.previewImageId)
                   setLightboxImageId(lightboxId, [lightboxId])
                 }}
-                className={`flex h-[248px] w-[220px] max-w-full items-center justify-center overflow-hidden rounded-md border border-[#777] bg-white text-gray-300 transition focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/[0.18] dark:bg-white/[0.03] ${
+                className={`flex h-[248px] w-[220px] max-w-full items-center justify-center overflow-hidden rounded-2xl border border-[#777] bg-white text-gray-300 shadow-sm transition focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/[0.18] dark:bg-white/[0.03] ${
                   previewImageUrl ? 'cursor-zoom-in hover:border-blue-400' : 'cursor-default'
                 }`}
                 title={previewImageUrl ? '点击查看大图' : '暂无板式参考图'}
@@ -454,7 +457,7 @@ export default function InputBar() {
               <button
                 type="button"
                 onClick={() => !atImageLimit && fileInputRef.current?.click()}
-                className="flex h-[248px] w-[220px] max-w-full items-center justify-center overflow-hidden rounded-md border border-[#777] bg-white text-gray-300 transition hover:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/[0.18] dark:bg-white/[0.03]"
+                className="flex h-[248px] w-[220px] max-w-full items-center justify-center overflow-hidden rounded-2xl border border-[#777] bg-white text-gray-300 shadow-sm transition hover:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/[0.18] dark:bg-white/[0.03]"
                 title={atImageLimit ? `已达上限 ${API_MAX_IMAGES} 张` : '添加参考图'}
               >
                 {inputImages.length > 0 ? (
@@ -520,7 +523,7 @@ export default function InputBar() {
 
           <div className="min-w-0">
             <label className="mb-5 block">
-              <span className="mb-5 block text-base font-bold text-black dark:text-gray-100">板式选择</span>
+              <span className="mb-3 block text-base font-bold text-black dark:text-gray-100">板式选择</span>
               <Select
                 value={selectedTemplateId || '__none'}
                 onChange={(value) => {
@@ -529,7 +532,7 @@ export default function InputBar() {
                   setSelectedTemplateId(nextId)
                 }}
                 options={templateOptions}
-                className="h-[38px] w-full rounded-md border border-[#8d8d8d] bg-white px-3 text-base font-bold text-gray-900 shadow-none focus:outline-none focus:ring-2 focus:ring-blue-200 dark:bg-white/[0.04] dark:text-gray-100"
+                className="h-10 w-full rounded-xl border border-[#8d8d8d] bg-white px-3 text-sm font-bold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-200 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-100"
               />
             </label>
 
@@ -537,7 +540,7 @@ export default function InputBar() {
               <button
                 type="button"
                 onClick={() => setShowTemplatePicker(true)}
-                className="rounded-md bg-[#2f80ed] px-4 py-2 text-sm font-bold text-white shadow-[0_3px_10px_rgba(47,128,237,0.35)] transition hover:bg-blue-600"
+                className="rounded-xl bg-[#2f80ed] px-4 py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_rgba(47,128,237,0.25)] transition hover:bg-blue-600"
               >
                 选择模板
               </button>
@@ -547,7 +550,7 @@ export default function InputBar() {
 
         <div
           ref={fieldGridRef}
-          className="mt-5 grid gap-x-8 gap-y-3 xl:grid-cols-2"
+          className="mt-5 grid gap-x-8 gap-y-3 rounded-2xl border border-white/60 bg-white/30 p-4 backdrop-blur dark:border-white/[0.08] dark:bg-white/[0.02] xl:grid-cols-2"
           style={{ '--field-label-width': labelColumnWidth } as CSSProperties}
         >
           {selectedTemplate ? templateFields.map(renderTemplateField) : renderFreeformField()}
@@ -620,12 +623,12 @@ export default function InputBar() {
         </div>
 
         <div className="mt-auto pt-8">
-          <p className="mb-5 text-right text-base font-bold text-black dark:text-gray-100">*号为必填项/其余为选填项</p>
+          <p className="mb-4 text-right text-base font-bold text-black dark:text-gray-100">*号为必填项，其余为选填项</p>
           <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
             <button
               type="button"
               onClick={handleReset}
-              className="flex h-[52px] items-center justify-center gap-2 rounded-md bg-[#e5f1ff] text-base font-black text-[#2f80ed] transition hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-300"
+              className="flex h-[52px] items-center justify-center gap-2 rounded-2xl bg-[#e5f1ff] text-base font-black text-[#2f80ed] transition hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-300"
             >
               <RefreshCw className="h-5 w-5" />
               重置
@@ -634,7 +637,7 @@ export default function InputBar() {
               type="button"
               onClick={() => void submitTask()}
               disabled={!canSubmit}
-              className="flex h-[52px] items-center justify-center gap-2 rounded-md bg-[#2f80ed] text-base font-black text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-white"
+              className="flex h-[52px] items-center justify-center gap-2 rounded-2xl bg-[#2f80ed] text-base font-black text-white shadow-[0_10px_28px_rgba(47,128,237,0.28)] transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-white disabled:shadow-none"
             >
               {templateLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Paperclip className="h-5 w-5" />}
               消耗{totalCreditCost}积分生成图片
