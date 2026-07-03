@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Ban, ImageIcon, Loader2, Paperclip, Pencil, RefreshCw, Trash2, X } from 'lucide-react'
 import { addImageFromFile, submitTask, useStore } from '../store'
 import { DEFAULT_PARAMS, MAX_TASK_N, normalizeTaskN, type PromptTemplateField } from '../types'
@@ -80,11 +80,14 @@ export default function InputBar() {
   const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const fieldGridRef = useRef<HTMLDivElement>(null)
+  const labelMeasureRefs = useRef(new Map<string, HTMLSpanElement>())
   const dragCounter = useRef(0)
   const [isDragging, setIsDragging] = useState(false)
   const [showSizePicker, setShowSizePicker] = useState(false)
   const [showTemplatePicker, setShowTemplatePicker] = useState(false)
   const [nInput, setNInput] = useState(String(params.n))
+  const [labelColumnWidth, setLabelColumnWidth] = useState('max-content')
 
   useTemplateBootstrap()
 
@@ -252,8 +255,66 @@ export default function InputBar() {
   }
 
   const inputClass =
-    'h-9 w-full rounded-md border border-transparent bg-white px-3 text-sm font-semibold text-[#9aa3b1] shadow-[0_1px_10px_rgba(31,41,55,0.16)] outline-none transition focus:border-blue-300 focus:text-gray-900 focus:ring-2 focus:ring-blue-200/70 dark:bg-white/[0.06] dark:text-gray-300 dark:focus:text-white'
-  const labelClass = 'grid min-w-0 grid-cols-[4.75rem_minmax(0,1fr)] items-center gap-2 text-base font-bold text-black dark:text-gray-100'
+    'h-9 w-full rounded-md border border-transparent bg-white px-3 text-sm font-semibold text-gray-900 placeholder:text-[#9aa3b1] shadow-[0_1px_10px_rgba(31,41,55,0.16)] outline-none transition focus:border-blue-300 focus:ring-2 focus:ring-blue-200/70 dark:bg-white/[0.06] dark:text-gray-100 dark:placeholder:text-gray-500'
+  const labelClass = 'grid min-w-0 grid-cols-1 items-start gap-2 text-base font-bold text-black sm:grid-cols-[var(--field-label-width)_minmax(0,1fr)] sm:items-center dark:text-gray-100'
+
+  const setLabelMeasureRef = useCallback(
+    (key: string) => (node: HTMLSpanElement | null) => {
+      if (node) {
+        labelMeasureRefs.current.set(key, node)
+      } else {
+        labelMeasureRefs.current.delete(key)
+      }
+    },
+    [],
+  )
+
+  const renderLabelText = (key: string, text: string) => (
+    <span ref={setLabelMeasureRef(key)} className="break-words leading-snug">
+      {text}
+    </span>
+  )
+
+  const measureLabelColumnWidth = useCallback(() => {
+    const labels = Array.from(labelMeasureRefs.current.values())
+    if (labels.length === 0) return
+
+    const sampleLabel = labels[0]
+    const labelStyle = getComputedStyle(sampleLabel)
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+    const maxNeededWidth = Math.ceil(
+      Math.max(
+        ...labels.map((label) => {
+          if (!context) return label.scrollWidth
+          const style = getComputedStyle(label)
+          context.font = `${style.fontStyle} ${style.fontVariant} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+          return context.measureText(label.textContent || '').width
+        }),
+      ),
+    )
+    const letterSpacing = parseFloat(labelStyle.letterSpacing || '0') || 0
+    const firstRow = labels[0].closest('label') as HTMLElement | null
+    const rowWidth = firstRow?.clientWidth || fieldGridRef.current?.clientWidth || 0
+    const columnGap = firstRow ? parseFloat(getComputedStyle(firstRow).columnGap || '0') || 0 : 0
+    const maxUsableWidth = rowWidth > 0 ? Math.max(0, Math.floor(rowWidth - columnGap - rowWidth * 0.5)) : maxNeededWidth
+    const nextWidth = maxUsableWidth > 0 ? Math.min(maxNeededWidth, maxUsableWidth) : maxNeededWidth
+
+    setLabelColumnWidth(`${Math.max(1, nextWidth + letterSpacing)}px`)
+  }, [])
+
+  useLayoutEffect(() => {
+    measureLabelColumnWidth()
+  }, [measureLabelColumnWidth, isTemplateMode, selectedTemplateId, templateFields, resolutionOptions.length])
+
+  useEffect(() => {
+    const fieldGrid = fieldGridRef.current
+    if (!fieldGrid) return
+    if (typeof ResizeObserver === 'undefined') return
+    const resizeObserver = new ResizeObserver(measureLabelColumnWidth)
+    resizeObserver.observe(fieldGrid)
+    return () => resizeObserver.disconnect()
+  }, [measureLabelColumnWidth])
 
   const renderTemplateField = (field: PromptTemplateField) => {
     const value = templateInputs[field.key]
@@ -262,7 +323,7 @@ export default function InputBar() {
     return (
       <div key={field.key} className="contents">
         <label className={labelClass}>
-          <span className="truncate">{labelText(field.label || field.key, field.required)}</span>
+          {renderLabelText(field.key, labelText(field.label || field.key, field.required))}
           {field.type === 'long_text' ? (
           <Textarea
             value={String(value ?? '')}
@@ -298,7 +359,7 @@ export default function InputBar() {
         </label>
         {field.type === 'select' && value === '自定义' && (
           <label className={labelClass}>
-            <span className="truncate">{labelText(field.label || field.key, field.required)}</span>
+            {renderLabelText(customInputKey(field.key), labelText(field.label || field.key, field.required))}
             <input
               value={String(templateInputs[customInputKey(field.key)] ?? '')}
               onChange={(e) => setTemplateInput(customInputKey(field.key), e.target.value)}
@@ -314,7 +375,7 @@ export default function InputBar() {
 
   const renderFreeformField = () => (
     <label className="flex min-w-0 flex-col gap-2 text-base font-bold text-black dark:text-gray-100">
-      {labelText('标题', true)}
+      {renderLabelText('freeform-title', labelText('标题', true))}
       <Textarea
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
@@ -468,7 +529,7 @@ export default function InputBar() {
                   setSelectedTemplateId(nextId)
                 }}
                 options={templateOptions}
-                className="h-[38px] w-full rounded-md border border-[#8d8d8d] bg-white px-3 text-base font-bold text-[#9aa3b1] shadow-none focus:outline-none focus:ring-2 focus:ring-blue-200 dark:bg-white/[0.04] dark:text-gray-300"
+                className="h-[38px] w-full rounded-md border border-[#8d8d8d] bg-white px-3 text-base font-bold text-gray-900 shadow-none focus:outline-none focus:ring-2 focus:ring-blue-200 dark:bg-white/[0.04] dark:text-gray-100"
               />
             </label>
 
@@ -484,10 +545,14 @@ export default function InputBar() {
           </div>
         </div>
 
-        <div className="mt-5 grid gap-x-8 gap-y-3 xl:grid-cols-2">
+        <div
+          ref={fieldGridRef}
+          className="mt-5 grid gap-x-8 gap-y-3 xl:grid-cols-2"
+          style={{ '--field-label-width': labelColumnWidth } as CSSProperties}
+        >
           {selectedTemplate ? templateFields.map(renderTemplateField) : renderFreeformField()}
           <label className={labelClass}>
-            <span>补充：</span>
+            {renderLabelText('extra-prompt', '补充：')}
             <input
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
@@ -497,7 +562,7 @@ export default function InputBar() {
           </label>
           {isTemplateMode ? (
             <label className={labelClass}>
-              <span>分辨率：</span>
+              {renderLabelText('resolution', '分辨率：')}
               {resolutionOptions.length > 0 ? (
                 <Select
                   value={selectedResolutionId}
@@ -517,7 +582,7 @@ export default function InputBar() {
             </label>
           ) : (
             <label className={labelClass}>
-              <span>尺寸：</span>
+              {renderLabelText('size', '尺寸：')}
               <button
                 type="button"
                 onClick={() => setShowSizePicker(true)}
@@ -528,7 +593,7 @@ export default function InputBar() {
             </label>
           )}
           <label className={labelClass}>
-            <span>格式：</span>
+            {renderLabelText('format', '格式：')}
             <Select
               value={params.output_format}
               onChange={(value) => setParams({ output_format: value as typeof params.output_format })}
@@ -541,7 +606,7 @@ export default function InputBar() {
             />
           </label>
           <label className={labelClass}>
-            <span>数量：</span>
+            {renderLabelText('count', '数量：')}
             <input
               value={nInput}
               onChange={(e) => setNInput(e.target.value)}
@@ -555,7 +620,7 @@ export default function InputBar() {
         </div>
 
         <div className="mt-auto pt-8">
-          <p className="mb-5 text-base font-bold text-black dark:text-gray-100">*号为必填项/其余为选填项</p>
+          <p className="mb-5 text-right text-base font-bold text-black dark:text-gray-100">*号为必填项/其余为选填项</p>
           <div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
             <button
               type="button"
