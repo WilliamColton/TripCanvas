@@ -17,6 +17,9 @@
 - 后端 SQL 初始化配置为 `spring.sql.init.mode=always` 且 `continue-on-error=true`；MySQL schema 在 `backend-java/src/main/resources/db/migration/`，`DatabaseBootstrap` 启动时也会补一些缺失列/索引。
 - Vite 会尝试加载被忽略的 `dev-proxy.config.json`；如果存在且启用，会通过 `src/lib/devProxy.ts` 定义仅开发环境使用的代理前缀和目标。
 
+**Bug 处理流程**
+- 如果遇到暂时没有解决的 bug，使用 lark-task skill（`lark-cli task +create`，`--as user`）把它报到飞书任务里，分配给当前登录用户，并在描述中写清复现步骤、期望行为和排查方向。不要把未解决 bug 只留在对话里。
+
 **仓库特殊点**
 - `.gitignore` 有意保留 `backend-java/target/tripcanvas-backend-0.1.0-SNAPSHOT.jar` 可跟踪，同时忽略其他 target 输出。Maven 命令可能让 target 产物变脏；提交前要检查，不要默认所有 `target/` 变化都可丢弃。
 - 这个仓库忽略 `README.md` 和 `docs/`，所以可执行配置通常比缺失的文档更可信。
