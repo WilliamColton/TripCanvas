@@ -14,6 +14,7 @@ public record GenerateRequest(
     @Pattern(regexp = "freeform|template", message = "提示词模式无效") String promptMode,
     @Size(max = 64, message = "模板 ID 无效") String templateId,
     @Size(max = 64, message = "模板分辨率档位 ID 无效") String templateResolutionId,
+    @Size(max = 64, message = "模板质量档位 ID 无效") String templateQualityId,
     TemplateInputs templateInputs,
     @Size(max = 4000, message = "补充要求最多 4000 字") String additionalPrompt,
     @Valid TaskParamsResponse params,

@@ -24,6 +24,8 @@ public class PromptTemplateEntity {
     private String fieldSchemaJson;
     @Column("resolution_options_json")
     private String resolutionOptionsJson;
+    @Column("quality_options_json")
+    private String qualityOptionsJson;
     @Column("preview_image_id")
     private String previewImageId;
     @Column("prompt_body")

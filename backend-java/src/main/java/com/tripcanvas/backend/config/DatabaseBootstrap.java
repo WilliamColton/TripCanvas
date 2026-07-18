@@ -49,9 +49,12 @@ public class DatabaseBootstrap implements ApplicationRunner {
 
     private void ensureSchemaColumns() {
         addColumnIfMissing("prompt_templates", "resolution_options_json", "resolution_options_json LONGTEXT NOT NULL");
+        addColumnIfMissing("prompt_templates", "quality_options_json", "quality_options_json LONGTEXT");
         addColumnIfMissing("prompt_templates", "credit_cost", "credit_cost INT NOT NULL DEFAULT 1");
         addColumnIfMissing("tasks", "template_resolution_id", "template_resolution_id VARCHAR(64)");
         addColumnIfMissing("tasks", "template_resolution_name", "template_resolution_name VARCHAR(255)");
+        addColumnIfMissing("tasks", "template_quality_id", "template_quality_id VARCHAR(64)");
+        addColumnIfMissing("tasks", "template_quality_name", "template_quality_name VARCHAR(255)");
         addColumnIfMissing("tasks", "credit_cost", "credit_cost INT NOT NULL DEFAULT 1");
         addColumnIfMissing("users", "email", "email VARCHAR(255)");
         addColumnIfMissing("users", "email_verified_at", "email_verified_at BIGINT");
@@ -174,6 +177,7 @@ public class DatabaseBootstrap implements ApplicationRunner {
                 .setDescription(template.description())
                 .setFieldSchemaJson(JsonUtils.stringify(template.fields()))
                 .setResolutionOptionsJson("[]")
+                .setQualityOptionsJson("[]")
                 .setPromptBody(template.promptBody())
                 .setNegativePrompt("")
                 .setCreditCost(1)

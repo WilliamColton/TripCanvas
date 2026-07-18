@@ -14,6 +14,7 @@ public record PromptTemplateResponse(
     String description,
     List<PromptTemplateFieldResponse> fieldSchema,
     List<PromptTemplateResolutionOptionResponse> resolutionOptions,
+    List<PromptTemplateQualityOptionResponse> qualityOptions,
     String previewImageId,
     String promptBody,
     String negativePrompt,

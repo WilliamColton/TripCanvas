@@ -26,7 +26,7 @@ spring:
   sql:
     init:
       mode: always
-      schema-locations: classpath:db/migration/V1__init.sql,classpath:db/migration/V2__image_storage.sql
+      schema-locations: classpath:db/migration/V1__init.sql,classpath:db/migration/V2__image_storage.sql,classpath:db/migration/V3__template_quality_options.sql
       continue-on-error: true
   servlet:
     multipart:

@@ -33,6 +33,8 @@ public interface PromptTemplateService {
 
     ResolvedResolutionOption resolveResolution(String userId, String templateId, String templateResolutionId);
 
+    ResolvedQualityOption resolveQuality(String userId, String templateId, String templateQualityId);
+
     void validateTemplatePreview(String promptBody, List<PromptTemplateFieldResponse> fields);
 
     String previewPrompt(TemplateRequests.PreviewTemplateRequest request);
@@ -49,5 +51,8 @@ public interface PromptTemplateService {
     }
 
     record ResolvedResolutionOption(String id, String name, String size) {
+    }
+
+    record ResolvedQualityOption(String id, String name, String quality, Integer creditCost) {
     }
 }

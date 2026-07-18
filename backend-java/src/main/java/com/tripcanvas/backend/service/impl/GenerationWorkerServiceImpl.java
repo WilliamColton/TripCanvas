@@ -339,6 +339,8 @@ public class GenerationWorkerServiceImpl implements GenerationWorkerService {
             source.templateId(),
             source.templateResolutionId(),
             source.templateResolutionName(),
+            source.templateQualityId(),
+            source.templateQualityName(),
             source.templateTitle(),
             source.templateVersion(),
             source.creditCost(),

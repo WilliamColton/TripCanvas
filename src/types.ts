@@ -26,9 +26,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 // ===== 任务参数 =====
 
+export type TaskQuality = 'auto' | 'low' | 'medium' | 'high'
+
+export const TASK_QUALITIES: TaskQuality[] = ['auto', 'low', 'medium', 'high']
+
+export function normalizeTaskQuality(quality: unknown): TaskQuality {
+  return TASK_QUALITIES.includes(quality as TaskQuality) ? quality as TaskQuality : 'auto'
+}
+
 export interface TaskParams {
   size: string
-  quality: 'auto' | 'low' | 'medium' | 'high'
+  quality: TaskQuality
   output_format: 'png' | 'jpeg' | 'webp'
   output_compression: number | null
   moderation: 'auto' | 'low'
@@ -95,6 +103,13 @@ export interface PromptTemplateResolutionOption {
   size?: string
 }
 
+export interface PromptTemplateQualityOption {
+  id: string
+  name: string
+  quality?: TaskQuality
+  creditCost?: number
+}
+
 export interface PromptTemplate {
   id: string
   ownerUserId?: string
@@ -105,6 +120,7 @@ export interface PromptTemplate {
   description: string
   fieldSchema: PromptTemplateField[]
   resolutionOptions?: PromptTemplateResolutionOption[]
+  qualityOptions?: PromptTemplateQualityOption[]
   previewImageId?: string
   promptBody?: string
   negativePrompt?: string
@@ -124,6 +140,7 @@ export interface PromptTemplatePayload {
   description: string
   fieldSchema: PromptTemplateField[]
   resolutionOptions?: PromptTemplateResolutionOption[]
+  qualityOptions?: PromptTemplateQualityOption[]
   previewImageId?: string
   promptBody: string
   negativePrompt?: string
@@ -147,6 +164,8 @@ export interface TaskRecord {
   templateId?: string
   templateResolutionId?: string
   templateResolutionName?: string
+  templateQualityId?: string
+  templateQualityName?: string
   templateTitle?: string
   templateVersion?: number
   creditCost?: number

@@ -2,6 +2,7 @@ package com.tripcanvas.backend.dto.request;
 
 import com.tripcanvas.backend.dto.TemplateInputs;
 import com.tripcanvas.backend.dto.response.PromptTemplateFieldResponse;
+import com.tripcanvas.backend.dto.response.PromptTemplateQualityOptionResponse;
 import com.tripcanvas.backend.dto.response.PromptTemplateResolutionOptionResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -19,6 +20,7 @@ public final class TemplateRequests {
         @Size(max = 1000, message = "模板描述最多 1000 个字符") String description,
         @Size(max = 50, message = "模板字段最多 50 个") List<@Valid PromptTemplateFieldResponse> fieldSchema,
         @Size(max = 20, message = "分辨率档位最多 20 个") List<@Valid PromptTemplateResolutionOptionResponse> resolutionOptions,
+        @Size(max = 20, message = "质量档位最多 20 个") List<@Valid PromptTemplateQualityOptionResponse> qualityOptions,
         @Size(max = 64, message = "预览图片 ID 无效") String previewImageId,
         @NotBlank(message = "请输入模板提示词") @Size(max = 20000, message = "模板提示词最多 20000 个字符") String promptBody,
         @Size(max = 4000, message = "负面约束最多 4000 个字符") String negativePrompt,

@@ -10,9 +10,11 @@ import type {
   MaskDraft,
   PromptTemplate,
   PromptTemplateInputs,
+  PromptTemplateQualityOption,
+  PromptTemplateResolutionOption,
   TaskRecord,
 } from './types'
-import { DEFAULT_SETTINGS, DEFAULT_PARAMS, normalizeTaskN } from './types'
+import { DEFAULT_SETTINGS, DEFAULT_PARAMS, normalizeTaskN, normalizeTaskQuality } from './types'
 import {
   clearBackendToken,
   clearRemoteTasks,
@@ -149,7 +151,7 @@ function clearLocalSessionState() {
   clearPersistedImageUrlCache()
   useStore.getState().setAuthUser(null)
   useStore.getState().setTasks([])
-  useStore.setState({ templates: [], templatesLoaded: false, selectedTemplateId: '', selectedTemplateResolutionId: '', templateInputs: {} })
+  useStore.setState({ templates: [], templatesLoaded: false, selectedTemplateId: '', selectedTemplateResolutionId: '', selectedTemplateQualityId: '', templateInputs: {} })
   useStore.getState().setShowSettings(false)
 }
 
@@ -252,6 +254,8 @@ interface AppState {
   setSelectedTemplateId: (id: string) => void
   selectedTemplateResolutionId: string
   setSelectedTemplateResolutionId: (id: string) => void
+  selectedTemplateQualityId: string
+  setSelectedTemplateQualityId: (id: string) => void
   templateInputs: PromptTemplateInputs
   setTemplateInput: (key: string, value: unknown) => void
   clearTemplateInputs: () => void
@@ -327,20 +331,41 @@ interface AppState {
   setConfirmDialog: (d: AppState['confirmDialog']) => void
 }
 
+
+function templateOptionCreditCost(option: PromptTemplateQualityOption | null | undefined, fallback = 1) {
+  const numeric = typeof option?.creditCost === 'number' ? option.creditCost : fallback
+  return Number.isInteger(numeric) && numeric >= 1 ? numeric : fallback
+}
+
 function firstTemplateResolutionId(templates: PromptTemplate[], templateId: string): string {
   if (!templateId) return ''
   const template = templates.find((item) => item.id === templateId)
   return template?.resolutionOptions?.[0]?.id || ''
 }
 
-function resolveSelectedTemplateState(templates: PromptTemplate[], currentTemplateId: string, currentResolutionId: string) {
+function firstTemplateQualityId(templates: PromptTemplate[], templateId: string): string {
+  if (!templateId) return ''
+  const template = templates.find((item) => item.id === templateId)
+  return template?.qualityOptions?.[0]?.id || ''
+}
+
+function resolveSelectedTemplateState(
+  templates: PromptTemplate[],
+  currentTemplateId: string,
+  currentResolutionId: string,
+  currentQualityId: string,
+) {
   const selectedTemplateId = currentTemplateId || templates[0]?.id || ''
   const template = templates.find((item) => item.id === selectedTemplateId)
-  const options = template?.resolutionOptions || []
-  const selectedTemplateResolutionId = options.some((option) => option.id === currentResolutionId)
+  const resolutionOptions = template?.resolutionOptions || []
+  const qualityOptions = template?.qualityOptions || []
+  const selectedTemplateResolutionId = resolutionOptions.some((option) => option.id === currentResolutionId)
     ? currentResolutionId
-    : options[0]?.id || ''
-  return { selectedTemplateId, selectedTemplateResolutionId }
+    : resolutionOptions[0]?.id || ''
+  const selectedTemplateQualityId = qualityOptions.some((option) => option.id === currentQualityId)
+    ? currentQualityId
+    : qualityOptions[0]?.id || ''
+  return { selectedTemplateId, selectedTemplateResolutionId, selectedTemplateQualityId }
 }
 
 export const useStore = create<AppState>()(
@@ -384,7 +409,7 @@ export const useStore = create<AppState>()(
           const { templates } = await getTemplates()
           set((s) => ({
             templates,
-            ...resolveSelectedTemplateState(templates, s.selectedTemplateId, s.selectedTemplateResolutionId),
+            ...resolveSelectedTemplateState(templates, s.selectedTemplateId, s.selectedTemplateResolutionId, s.selectedTemplateQualityId),
           }))
         } finally {
           set({ templateLoading: false })
@@ -395,11 +420,14 @@ export const useStore = create<AppState>()(
       setSelectedTemplateId: (selectedTemplateId) => set((s) => ({
         selectedTemplateId,
         selectedTemplateResolutionId: firstTemplateResolutionId(s.templates, selectedTemplateId),
+        selectedTemplateQualityId: firstTemplateQualityId(s.templates, selectedTemplateId),
         templateInputs: {},
         ...(selectedTemplateId ? { inputImages: [], maskDraft: null, maskEditorImageId: null } : {}),
       })),
       selectedTemplateResolutionId: '',
       setSelectedTemplateResolutionId: (selectedTemplateResolutionId) => set({ selectedTemplateResolutionId }),
+      selectedTemplateQualityId: '',
+      setSelectedTemplateQualityId: (selectedTemplateQualityId) => set({ selectedTemplateQualityId }),
       templateInputs: {},
       setTemplateInput: (key, value) => set((s) => ({ templateInputs: { ...s.templateInputs, [key]: value } })),
       clearTemplateInputs: () => set({ templateInputs: {} }),
@@ -639,8 +667,20 @@ export async function loadChangelogEntries() {
 }
 
 export async function submitTask(options: { allowFullMask?: boolean } = {}) {
-  const { prompt, promptMode, selectedTemplateId, selectedTemplateResolutionId, templateInputs, templates, inputImages, maskDraft, params, showToast, setConfirmDialog } =
-    useStore.getState()
+  const {
+    prompt,
+    promptMode,
+    selectedTemplateId,
+    selectedTemplateResolutionId,
+    selectedTemplateQualityId,
+    templateInputs,
+    templates,
+    inputImages,
+    maskDraft,
+    params,
+    showToast,
+    setConfirmDialog,
+  } = useStore.getState()
 
   if (!useStore.getState().authUser) {
     showToast('请先输入 apikey 登录', 'error')
@@ -651,6 +691,9 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
   const isTemplateMode = promptMode === 'template' && Boolean(selectedTemplateId)
   const selectedResolution = isTemplateMode
     ? selectedTemplate?.resolutionOptions?.find((option) => option.id === selectedTemplateResolutionId) || selectedTemplate?.resolutionOptions?.[0] || null
+    : null
+  const selectedQuality = isTemplateMode
+    ? selectedTemplate?.qualityOptions?.find((option) => option.id === selectedTemplateQualityId) || selectedTemplate?.qualityOptions?.[0] || null
     : null
 
   if (isTemplateMode) {
@@ -705,8 +748,8 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
   const { tier: _ignoredTier, ...paramsWithoutTier } = params as TaskParams & { tier?: string }
   const normalizedParams = {
     ...paramsWithoutTier,
-    size: isTemplateMode ? DEFAULT_PARAMS.size : normalizeImageSize(params.size) || DEFAULT_PARAMS.size,
-    quality: DEFAULT_PARAMS.quality,
+    size: isTemplateMode ? (normalizeImageSize(selectedResolution?.size || '') || DEFAULT_PARAMS.size) : normalizeImageSize(params.size) || DEFAULT_PARAMS.size,
+    quality: isTemplateMode ? normalizeTaskQuality(selectedQuality?.quality) : DEFAULT_PARAMS.quality,
     output_compression: DEFAULT_PARAMS.output_compression,
     moderation: DEFAULT_PARAMS.moderation,
     n: normalizeTaskN(params.n),
@@ -730,7 +773,8 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
   // Show task UI immediately — uploads happen below
   const taskId = genId()
   const resolvedTemplateInputs = isTemplateMode && selectedTemplate ? resolveTemplateInputs(selectedTemplate, templateInputs) : templateInputs
-  const taskCreditCost = normalizedParams.n * (isTemplateMode ? Math.max(1, selectedTemplate?.creditCost || 1) : 1)
+  const selectedOptionCreditCost = isTemplateMode ? templateOptionCreditCost(selectedQuality, Math.max(1, selectedTemplate?.creditCost || 1)) : 1
+  const taskCreditCost = normalizedParams.n * selectedOptionCreditCost
   const displayPrompt = isTemplateMode
     ? `${selectedTemplate?.title || '旅行模板'} · ${Object.values(resolvedTemplateInputs).filter((value) => value != null && String(value).trim()).slice(0, 3).join(' · ') || prompt.trim() || '待生成'}`
     : prompt.trim()
@@ -741,6 +785,8 @@ export async function submitTask(options: { allowFullMask?: boolean } = {}) {
     templateId: isTemplateMode ? selectedTemplateId : undefined,
     templateResolutionId: isTemplateMode ? selectedResolution?.id : undefined,
     templateResolutionName: isTemplateMode ? selectedResolution?.name || '' : undefined,
+    templateQualityId: isTemplateMode ? selectedQuality?.id : undefined,
+    templateQualityName: isTemplateMode ? selectedQuality?.name || '' : undefined,
     templateTitle: isTemplateMode ? selectedTemplate?.title : undefined,
     templateVersion: isTemplateMode ? selectedTemplate?.version : undefined,
     creditCost: taskCreditCost,
@@ -856,6 +902,7 @@ async function executeTask(taskId: string) {
           promptMode: 'template' as const,
           templateId: task.templateId,
           templateResolutionId: task.templateResolutionId,
+          templateQualityId: task.templateQualityId,
           templateInputs: task.templateInputs,
           additionalPrompt: task.userPrompt || '',
         }
@@ -930,11 +977,12 @@ export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
 
 /** 复用配置 */
 export async function reuseConfig(task: TaskRecord) {
-  const { setPrompt, setPromptMode, setSelectedTemplateId, setSelectedTemplateResolutionId, setParams, setInputImages, setMaskDraft, clearMaskDraft, showToast } = useStore.getState()
+  const { setPrompt, setPromptMode, setSelectedTemplateId, setSelectedTemplateResolutionId, setSelectedTemplateQualityId, setParams, setInputImages, setMaskDraft, clearMaskDraft, showToast } = useStore.getState()
   if (task.promptMode === 'template' && task.templateId) {
     setPromptMode('template')
     setSelectedTemplateId(task.templateId)
     setSelectedTemplateResolutionId(task.templateResolutionId || '')
+    setSelectedTemplateQualityId(task.templateQualityId || '')
     useStore.setState({ templateInputs: { ...(task.templateInputs || {}) } })
     setPrompt(task.userPrompt || '')
   } else {

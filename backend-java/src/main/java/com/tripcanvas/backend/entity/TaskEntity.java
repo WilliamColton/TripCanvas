@@ -24,6 +24,10 @@ public class TaskEntity {
     private String templateResolutionId;
     @Column("template_resolution_name")
     private String templateResolutionName;
+    @Column("template_quality_id")
+    private String templateQualityId;
+    @Column("template_quality_name")
+    private String templateQualityName;
     @Column("template_title_snapshot")
     private String templateTitleSnapshot;
     @Column("template_version")

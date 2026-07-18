@@ -162,6 +162,8 @@ export default function DetailModal() {
   const currentActualParams = currentOutputImageId ? task.actualParamsByImage?.[currentOutputImageId] : undefined
   const currentRevisedPrompt = task.promptMode === 'template' ? '' : currentOutputImageId ? task.revisedPromptByImage?.[currentOutputImageId]?.trim() : ''
   const isTemplateTask = task.promptMode === 'template'
+  const templateResolutionDisplay = task.templateResolutionName || task.params.size || 'auto'
+  const templateQualityDisplay = task.templateQualityName || task.params.quality || 'auto'
   const showRevisedPrompt = Boolean(currentRevisedPrompt && currentRevisedPrompt !== task.prompt.trim())
   const codexCliPromptKey = getCodexCliPromptKey(settings)
   const hasHandledPromptWarning = settings.codexCli || dismissedCodexCliPrompts.includes(codexCliPromptKey)
@@ -519,9 +521,18 @@ export default function DetailModal() {
                 <span className="text-gray-400 dark:text-gray-500">{isTemplateTask ? '分辨率' : '尺寸'}</span>
                 <br />
                 {isTemplateTask ? (
-                  <span className="font-medium text-gray-700 dark:text-gray-300">{task.templateResolutionName || ''}</span>
+                  <span className="font-medium text-gray-700 dark:text-gray-300">{templateResolutionDisplay}</span>
                 ) : (
                   <DetailParamValue task={task} paramKey="size" className="font-medium" actualParams={currentActualParams} />
+                )}
+              </div>
+              <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2">
+                <span className="text-gray-400 dark:text-gray-500">质量</span>
+                <br />
+                {isTemplateTask ? (
+                  <span className="font-medium text-gray-700 dark:text-gray-300">{templateQualityDisplay}</span>
+                ) : (
+                  <DetailParamValue task={task} paramKey="quality" className="font-medium" actualParams={currentActualParams} />
                 )}
               </div>
               <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2">

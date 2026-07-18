@@ -14,6 +14,8 @@ public record TaskRecordResponse(
     String templateId,
     String templateResolutionId,
     String templateResolutionName,
+    String templateQualityId,
+    String templateQualityName,
     String templateTitle,
     Integer templateVersion,
     Integer creditCost,

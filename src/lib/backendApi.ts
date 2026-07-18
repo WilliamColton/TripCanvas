@@ -372,6 +372,7 @@ export interface SubmitTaskTemplateOptions {
   promptMode?: PromptMode
   templateId?: string
   templateResolutionId?: string
+  templateQualityId?: string
   templateInputs?: PromptTemplateInputs
   additionalPrompt?: string
 }

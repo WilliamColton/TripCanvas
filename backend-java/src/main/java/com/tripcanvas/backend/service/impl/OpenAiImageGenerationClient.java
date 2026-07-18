@@ -72,7 +72,7 @@ public class OpenAiImageGenerationClient implements ImageGenerationClient {
         int normalizedN = ImageSizeUtils.normalizeTaskN(n);
         if (codexCli && normalizedN > 1) {
             Runnable acquiredOnce = once(onAcquired);
-            TaskParamsResponse singleParams = new TaskParamsResponse(params.size(), params.tier(), "auto", params.outputFormat(), params.outputCompression(), params.moderation(), 1);
+            TaskParamsResponse singleParams = new TaskParamsResponse(params.size(), params.tier(), params.quality(), params.outputFormat(), params.outputCompression(), params.moderation(), 1);
             return runConcurrent(normalizedN, () -> generate(prompt, singleParams, 1, true, acquiredOnce, endpoints));
         }
         return withFailover(endpoints, onAcquired, endpoint -> generateOnce(prompt, params, normalizedN, codexCli, endpoint));

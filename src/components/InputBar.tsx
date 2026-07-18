@@ -1,7 +1,7 @@
 import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Ban, ImageIcon, Loader2, Paperclip, Pencil, RefreshCw, Trash2, X } from 'lucide-react'
 import { addImageFromFile, submitTask, useStore } from '../store'
-import { DEFAULT_PARAMS, MAX_TASK_N, normalizeTaskN, type PromptTemplateField } from '../types'
+import { DEFAULT_PARAMS, MAX_TASK_N, normalizeTaskN, normalizeTaskQuality, type PromptTemplateField, type PromptTemplateQualityOption, type PromptTemplateResolutionOption, type TaskQuality } from '../types'
 import { normalizeImageSize } from '../lib/size'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
@@ -12,6 +12,34 @@ import TemplatePreviewImg from './TemplatePreviewImg'
 import { getTemplatePreviewLightboxId } from '../lib/lightboxIds'
 
 const API_MAX_IMAGES = 16
+
+const QUALITY_LABELS: Record<TaskQuality, string> = {
+  auto: '自动',
+  low: '低质量',
+  medium: '中质量',
+  high: '高质量',
+}
+
+function templateQualityCreditCost(option: PromptTemplateQualityOption | null | undefined, fallback = 1) {
+  const numeric = typeof option?.creditCost === 'number' ? option.creditCost : fallback
+  return Number.isInteger(numeric) && numeric >= 1 ? numeric : fallback
+}
+
+function templateResolutionOptionLabel(option: PromptTemplateResolutionOption) {
+  const name = option.name || '自动'
+  const parts = [name]
+  if (option.size && option.size !== 'auto') parts.push(option.size)
+  return parts.join(' · ')
+}
+
+function templateQualityOptionLabel(option: PromptTemplateQualityOption, fallbackCreditCost = 1) {
+  const quality = QUALITY_LABELS[normalizeTaskQuality(option.quality)]
+  const name = option.name || quality
+  const parts = [name]
+  if (name !== quality) parts.push(quality)
+  parts.push(`${templateQualityCreditCost(option, fallbackCreditCost)} 积分/张`)
+  return parts.join(' · ')
+}
 
 function fieldPlaceholder(field: PromptTemplateField) {
   if (field.placeholder) return field.placeholder
@@ -64,6 +92,8 @@ export default function InputBar() {
   const setSelectedTemplateId = useStore((s) => s.setSelectedTemplateId)
   const selectedTemplateResolutionId = useStore((s) => s.selectedTemplateResolutionId)
   const setSelectedTemplateResolutionId = useStore((s) => s.setSelectedTemplateResolutionId)
+  const selectedTemplateQualityId = useStore((s) => s.selectedTemplateQualityId)
+  const setSelectedTemplateQualityId = useStore((s) => s.setSelectedTemplateQualityId)
   const templateInputs = useStore((s) => s.templateInputs)
   const setTemplateInput = useStore((s) => s.setTemplateInput)
   const clearTemplateInputs = useStore((s) => s.clearTemplateInputs)
@@ -95,9 +125,14 @@ export default function InputBar() {
   const isTemplateMode = promptMode === 'template'
   const templateFields = selectedTemplate?.fieldSchema || []
   const resolutionOptions = selectedTemplate?.resolutionOptions || []
+  const qualityOptions = selectedTemplate?.qualityOptions || []
   const selectedResolutionId = resolutionOptions.some((option) => option.id === selectedTemplateResolutionId)
     ? selectedTemplateResolutionId
     : resolutionOptions[0]?.id || ''
+  const selectedQualityId = qualityOptions.some((option) => option.id === selectedTemplateQualityId)
+    ? selectedTemplateQualityId
+    : qualityOptions[0]?.id || ''
+  const selectedQuality = qualityOptions.find((option) => option.id === selectedQualityId) || qualityOptions[0] || null
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
   const remainingCredits = authUser
     ? authUser.unlimitedQuota
@@ -118,7 +153,8 @@ export default function InputBar() {
         return value != null && String(value).trim() !== ''
       })
     : Boolean(prompt.trim())
-  const totalCreditCost = normalizeTaskN(params.n) * (isTemplateMode ? Math.max(1, selectedTemplate?.creditCost || 1) : 1)
+  const selectedOptionCreditCost = isTemplateMode ? templateQualityCreditCost(selectedQuality, Math.max(1, selectedTemplate?.creditCost || 1)) : 1
+  const totalCreditCost = normalizeTaskN(params.n) * selectedOptionCreditCost
 
   useEffect(() => {
     setNInput(String(params.n))
@@ -127,12 +163,24 @@ export default function InputBar() {
   useEffect(() => {
     if (!selectedTemplate) {
       if (selectedTemplateResolutionId) setSelectedTemplateResolutionId('')
+      if (selectedTemplateQualityId) setSelectedTemplateQualityId('')
       return
     }
     if (selectedResolutionId !== selectedTemplateResolutionId) {
       setSelectedTemplateResolutionId(selectedResolutionId)
     }
-  }, [selectedTemplate, selectedResolutionId, selectedTemplateResolutionId, setSelectedTemplateResolutionId])
+    if (selectedQualityId !== selectedTemplateQualityId) {
+      setSelectedTemplateQualityId(selectedQualityId)
+    }
+  }, [
+    selectedTemplate,
+    selectedResolutionId,
+    selectedTemplateResolutionId,
+    setSelectedTemplateResolutionId,
+    selectedQualityId,
+    selectedTemplateQualityId,
+    setSelectedTemplateQualityId,
+  ])
 
   const commitN = useCallback(() => {
     const nextValue = Number(nInput)
@@ -305,7 +353,7 @@ export default function InputBar() {
 
   useLayoutEffect(() => {
     measureLabelColumnWidth()
-  }, [measureLabelColumnWidth, isTemplateMode, selectedTemplateId, templateFields, resolutionOptions.length])
+  }, [measureLabelColumnWidth, isTemplateMode, selectedTemplateId, templateFields, resolutionOptions.length, qualityOptions.length])
 
   useEffect(() => {
     const fieldGrid = fieldGridRef.current
@@ -564,25 +612,46 @@ export default function InputBar() {
             />
           </label>
           {isTemplateMode ? (
-            <label className={labelClass}>
-              {renderLabelText('resolution', '分辨率：')}
-              {resolutionOptions.length > 0 ? (
-                <Select
-                  value={selectedResolutionId}
-                  onChange={(value) => setSelectedTemplateResolutionId(String(value))}
-                  options={resolutionOptions.map((option) => ({ label: option.name, value: option.id }))}
-                  className={inputClass}
-                />
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  className={`${inputClass} text-left text-gray-500 dark:text-gray-400`}
-                >
-                  默认
-                </button>
-              )}
-            </label>
+            <>
+              <label className={labelClass}>
+                {renderLabelText('resolution', '分辨率：')}
+                {resolutionOptions.length > 0 ? (
+                  <Select
+                    value={selectedResolutionId}
+                    onChange={(value) => setSelectedTemplateResolutionId(String(value))}
+                    options={resolutionOptions.map((option) => ({ label: templateResolutionOptionLabel(option), value: option.id }))}
+                    className={inputClass}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className={`${inputClass} text-left text-gray-500 dark:text-gray-400`}
+                  >
+                    自动
+                  </button>
+                )}
+              </label>
+              <label className={labelClass}>
+                {renderLabelText('quality', '质量：')}
+                {qualityOptions.length > 0 ? (
+                  <Select
+                    value={selectedQualityId}
+                    onChange={(value) => setSelectedTemplateQualityId(String(value))}
+                    options={qualityOptions.map((option) => ({ label: templateQualityOptionLabel(option, Math.max(1, selectedTemplate?.creditCost || 1)), value: option.id }))}
+                    className={inputClass}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className={`${inputClass} text-left text-gray-500 dark:text-gray-400`}
+                  >
+                    自动 · {Math.max(1, selectedTemplate?.creditCost || 1)} 积分/张
+                  </button>
+                )}
+              </label>
+            </>
           ) : (
             <label className={labelClass}>
               {renderLabelText('size', '尺寸：')}

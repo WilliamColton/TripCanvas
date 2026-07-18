@@ -149,6 +149,7 @@ export default function TaskCard({
       : 'bg-blue-500'
     : 'bg-gray-200 dark:bg-gray-700'
   const resolutionName = task.templateResolutionName || ''
+  const qualityName = task.templateQualityName || ''
   const title = task.prompt?.split('·')[0]?.trim() || '标题'
   const elapsed = durationText(task, now)
   const badge = statusBadge(task)
@@ -264,6 +265,7 @@ export default function TaskCard({
           <div className="truncate text-sm font-black">{title}</div>
           <div className="mt-1 flex min-w-0 items-center gap-2">
             {resolutionName && <span className="min-w-0 truncate rounded-full bg-[#edf6ff] px-2 py-0.5 text-[10px] font-bold text-[#98a2b3] dark:bg-white/[0.06] dark:text-gray-400">{resolutionName}</span>}
+            {qualityName && <span className="min-w-0 truncate rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-500 dark:bg-purple-500/10 dark:text-purple-300">{qualityName}</span>}
             <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${badge.className}`}>
               {badge.text}
             </span>

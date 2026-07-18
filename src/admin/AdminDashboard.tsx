@@ -22,7 +22,8 @@ import { formatMoneyInputFromX10000, parseMoneyInputToX10000 } from './moneyForm
 import { copyTextToClipboard } from '../lib/clipboard'
 import { useStore } from '../store'
 import { Toaster } from '../components/ui/sonner'
-import type { BugFeedback, BugFeedbackStatus, ChangelogEntry, ChangelogEntryPayload, PromptTemplate, PromptTemplateField, PromptTemplatePayload, PromptTemplateResolutionOption, ThemeMode } from '../types'
+import { TASK_QUALITIES, normalizeTaskQuality } from '../types'
+import type { BugFeedback, BugFeedbackStatus, ChangelogEntry, ChangelogEntryPayload, PromptTemplate, PromptTemplateField, PromptTemplatePayload, PromptTemplateQualityOption, PromptTemplateResolutionOption, TaskQuality, ThemeMode } from '../types'
 import FieldSchemaEditor from '../components/FieldSchemaEditor'
 import TemplatePreviewImg from '../components/TemplatePreviewImg'
 import Select from '../components/Select'
@@ -41,6 +42,45 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
+
+
+const TEMPLATE_QUALITY_LABELS: Record<TaskQuality, string> = {
+  auto: '自动',
+  low: '低质量',
+  medium: '中质量',
+  high: '高质量',
+}
+
+const TEMPLATE_QUALITY_BADGE_CLASS_NAMES: Record<TaskQuality, string> = {
+  auto: 'bg-gray-500/10 text-gray-700 ring-1 ring-gray-500/20 dark:text-gray-200',
+  low: 'bg-emerald-500/10 text-emerald-700 ring-1 ring-emerald-500/20 dark:text-emerald-300',
+  medium: 'bg-amber-500/10 text-amber-700 ring-1 ring-amber-500/20 dark:text-amber-300',
+  high: 'bg-rose-500/10 text-rose-700 ring-1 ring-rose-500/20 dark:text-rose-300',
+}
+
+function templateOptionCreditValue(value: unknown, fallback = 1) {
+  const numeric = typeof value === 'number' ? value : Number(value)
+  return Number.isInteger(numeric) && numeric >= 1 && numeric <= 1000 ? numeric : fallback
+}
+
+function fixedTemplateQualityOptions(options: PromptTemplateQualityOption[] = [], fallbackCreditCost = 1): PromptTemplateQualityOption[] {
+  const normalizedFallbackCreditCost = templateOptionCreditValue(fallbackCreditCost)
+  const creditCostByQuality = new Map<TaskQuality, number>()
+  for (const option of options) {
+    const quality = normalizeTaskQuality(option.quality)
+    creditCostByQuality.set(quality, templateOptionCreditValue(option.creditCost, normalizedFallbackCreditCost))
+  }
+  return TASK_QUALITIES.map((quality) => ({
+    id: `quality_${quality}`,
+    name: TEMPLATE_QUALITY_LABELS[quality],
+    quality,
+    creditCost: creditCostByQuality.get(quality) ?? normalizedFallbackCreditCost,
+  }))
+}
+
+function defaultTemplateQualityOptions(creditCost = 1): PromptTemplateQualityOption[] {
+  return fixedTemplateQualityOptions([], creditCost)
+}
 
 interface Props {
   onLogout: () => void
@@ -126,6 +166,7 @@ export default function AdminDashboard({ onLogout }: Props) {
   const [templateSortOrder, setTemplateSortOrder] = useState('0')
   const [templateFields, setTemplateFields] = useState<PromptTemplateField[]>([])
   const [templateResolutionOptions, setTemplateResolutionOptions] = useState<PromptTemplateResolutionOption[]>([])
+  const [templateQualityOptions, setTemplateQualityOptions] = useState<PromptTemplateQualityOption[]>(() => defaultTemplateQualityOptions())
   const [templatePreview, setTemplatePreview] = useState('')
   const [templateDeleteTarget, setTemplateDeleteTarget] = useState<PromptTemplate | null>(null)
   const [templateBatchDeleteConfirm, setTemplateBatchDeleteConfirm] = useState(false)
@@ -1049,7 +1090,7 @@ export default function AdminDashboard({ onLogout }: Props) {
 
   const newResolutionOption = (): PromptTemplateResolutionOption => ({
     id: `res_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-    name: '',
+    name: '自动分辨率',
     size: '',
   })
 
@@ -1059,6 +1100,10 @@ export default function AdminDashboard({ onLogout }: Props) {
 
   const updateTemplateResolutionOption = (id: string, patch: Partial<PromptTemplateResolutionOption>) => {
     setTemplateResolutionOptions(options => options.map(option => option.id === id ? { ...option, ...patch } : option))
+  }
+
+  const updateTemplateQualityOption = (id: string, patch: Partial<PromptTemplateQualityOption>) => {
+    setTemplateQualityOptions(options => options.map(option => option.id === id ? { ...option, ...patch } : option))
   }
 
   const splitResolutionSize = (size?: string) => {
@@ -1095,6 +1140,7 @@ export default function AdminDashboard({ onLogout }: Props) {
     setTemplateSortOrder('0')
     setTemplateFields([])
     setTemplateResolutionOptions([])
+    setTemplateQualityOptions(defaultTemplateQualityOptions(1))
     setTemplatePreview('')
   }
 
@@ -1110,11 +1156,32 @@ export default function AdminDashboard({ onLogout }: Props) {
     setTemplateCreditCost(String(Math.max(1, template.creditCost || 1)))
     setTemplateSortOrder(String(template.sortOrder || 0))
     setTemplateFields(template.fieldSchema || [])
-    setTemplateResolutionOptions((template.resolutionOptions || []).map(option => ({
-      id: option.id || newResolutionOption().id,
-      name: option.name || '',
-      size: option.size || '',
-    })))
+    const fallbackCreditCost = templateOptionCreditValue(template.creditCost)
+    const rawResolutionOptions = (template.resolutionOptions || []) as Array<PromptTemplateResolutionOption & Partial<PromptTemplateQualityOption>>
+    const rawQualityOptions = (template.qualityOptions || []) as PromptTemplateQualityOption[]
+    const nextResolutionOptions = rawResolutionOptions
+      .filter(option => !option.quality || (option.size && option.size !== 'auto'))
+      .map(option => ({
+        id: option.id || newResolutionOption().id,
+        name: option.name || '自动分辨率',
+        size: option.size === 'auto' ? '' : option.size || '',
+      }))
+    const legacyQualityOptions = rawResolutionOptions
+      .filter(option => option.quality || option.creditCost != null)
+      .map(option => {
+        const quality = normalizeTaskQuality(option.quality)
+        return {
+          id: `quality_${quality}`,
+          name: TEMPLATE_QUALITY_LABELS[quality],
+          quality,
+          creditCost: templateOptionCreditValue(option.creditCost, fallbackCreditCost),
+        }
+      })
+    setTemplateResolutionOptions(nextResolutionOptions)
+    setTemplateQualityOptions(fixedTemplateQualityOptions(
+      rawQualityOptions.length > 0 ? rawQualityOptions : legacyQualityOptions,
+      fallbackCreditCost,
+    ))
     setTemplatePreview('')
   }
 
@@ -1125,24 +1192,41 @@ export default function AdminDashboard({ onLogout }: Props) {
       const { width, height } = splitResolutionSize(option.size)
       const hasSize = Boolean(width || height)
       if (!name && !hasSize) continue
-      if (!name || !width || !height) {
-        toast('请完整填写分辨率名称和宽高', 'error')
+      if (hasSize && (!width || !height)) {
+        toast('请完整填写分辨率宽高，或留空使用自动尺寸', 'error')
         return null
       }
-      if (!/^[1-9]\d*$/.test(width) || !/^[1-9]\d*$/.test(height)) {
+      if (hasSize && (!/^[1-9]\d*$/.test(width) || !/^[1-9]\d*$/.test(height))) {
         toast('分辨率宽高必须是大于 0 的整数', 'error')
         return null
       }
       resolutionOptions.push({
         id: option.id,
+        name: name || (hasSize ? `${width}x${height}` : '自动分辨率'),
+        size: hasSize ? `${width}x${height}` : 'auto',
+      })
+    }
+
+    const qualityOptions: NonNullable<PromptTemplatePayload['qualityOptions']> = []
+    for (const option of templateQualityOptions) {
+      const quality = normalizeTaskQuality(option.quality)
+      const name = TEMPLATE_QUALITY_LABELS[quality]
+      const optionCreditCost = Number(option.creditCost)
+      if (!Number.isInteger(optionCreditCost) || optionCreditCost < 1 || optionCreditCost > 1000) {
+        toast('每个质量档位积分消耗必须是 1 到 1000 的整数', 'error')
+        return null
+      }
+      qualityOptions.push({
+        id: option.id,
         name,
-        size: `${width}x${height}`,
+        quality,
+        creditCost: optionCreditCost,
       })
     }
 
     const creditCost = Number(templateCreditCost)
     if (!Number.isInteger(creditCost) || creditCost < 1 || creditCost > 1000) {
-      toast('每张图积分消耗必须是 1 到 1000 的整数', 'error')
+      toast('默认每张图积分消耗必须是 1 到 1000 的整数', 'error')
       return null
     }
 
@@ -1156,6 +1240,7 @@ export default function AdminDashboard({ onLogout }: Props) {
       creditCost,
       fieldSchema: templateFields,
       resolutionOptions,
+      qualityOptions,
       status: 'draft',
       sortOrder: Number(templateSortOrder) || 0,
       assemblyMode: 'sections',
@@ -2168,6 +2253,7 @@ export default function AdminDashboard({ onLogout }: Props) {
                               <span className="rounded-full bg-blue-500/10 px-2 py-0.5 text-blue-600 dark:text-blue-300">{template.category}</span>
                               <span className="rounded-full bg-gray-500/10 px-2 py-0.5 text-gray-500">{template.source === 'admin' ? '管理员' : '用户'}</span>
                               <span className="rounded-full bg-gray-500/10 px-2 py-0.5 text-gray-500">{(template.resolutionOptions || []).length} 个分辨率</span>
+                              <span className="rounded-full bg-purple-500/10 px-2 py-0.5 text-purple-600 dark:text-purple-300">{(template.qualityOptions || []).length} 个质量</span>
                               <span className={`rounded-full px-2 py-0.5 ${template.status === 'published' ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-orange-500/10 text-orange-600 dark:text-orange-400'}`}>{template.status === 'published' ? '已启用' : '已停用'}</span>
                             </div>
                             <p className="mt-2 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">{template.description}</p>
@@ -2192,7 +2278,7 @@ export default function AdminDashboard({ onLogout }: Props) {
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <label className="text-xs text-gray-500">排序<Input value={templateSortOrder} onChange={(e) => setTemplateSortOrder(e.target.value)} className="mt-1" type="number" /></label>
-                <label className="text-xs text-gray-500">每张图积分消耗<Input value={templateCreditCost} onChange={(e) => setTemplateCreditCost(e.target.value.replace(/\D/g, ''))} className="mt-1" type="number" min={1} max={1000} /></label>
+                <label className="text-xs text-gray-500">默认每张图积分消耗<Input value={templateCreditCost} onChange={(e) => setTemplateCreditCost(e.target.value.replace(/\D/g, ''))} className="mt-1" type="number" min={1} max={1000} /></label>
               </div>
               <label className="mt-3 block text-xs text-gray-500">描述<Textarea value={templateDescription} onChange={(e) => setTemplateDescription(e.target.value)} className="mt-1 min-h-[4rem]" placeholder="用户可见的模板说明" /></label>
               <label className="mt-3 block text-xs text-gray-500">隐藏提示词模板<Textarea value={templatePromptBody} onChange={(e) => setTemplatePromptBody(e.target.value)} className="mt-1 min-h-[8rem] font-mono text-xs" placeholder="生成一张图片，风格是 {风格}，时间是 {季节}" /></label>
@@ -2219,31 +2305,34 @@ export default function AdminDashboard({ onLogout }: Props) {
               <label className="mt-3 block text-xs text-gray-500">负面约束<Textarea value={templateNegativePrompt} onChange={(e) => setTemplateNegativePrompt(e.target.value)} className="mt-1 min-h-[4rem]" placeholder="可选，普通用户不可见" /></label>
               <div className="mt-3 rounded-xl border border-gray-200/70 bg-gray-50/70 p-3 dark:border-white/[0.08] dark:bg-white/[0.03]">
                 <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="text-xs font-medium text-gray-600 dark:text-gray-300">分辨率档位</div>
+                  <div>
+                    <div className="text-xs font-medium text-gray-600 dark:text-gray-300">分辨率档位</div>
+                    <div className="mt-1 text-[11px] text-gray-400">只控制生成尺寸；不配置时用户使用自动分辨率。分辨率和图片质量可独立选择。</div>
+                  </div>
                   <Button type="button" size="sm" variant="outline" onClick={addTemplateResolutionOption}>
                     <Plus className="h-3.5 w-3.5" />
-                    新增档位
+                    新增分辨率
                   </Button>
                 </div>
                 {templateResolutionOptions.length === 0 ? (
                   <div className="rounded-lg border border-dashed border-gray-200 bg-white/70 px-3 py-4 text-center text-xs text-gray-400 dark:border-white/[0.08] dark:bg-white/[0.03]">
-                    未配置时模板任务使用自动尺寸
+                    未配置分辨率时，模板任务使用自动分辨率
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.5rem] gap-2 px-1 text-[11px] text-gray-400 sm:grid">
+                    <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.5rem] gap-2 px-1 text-[11px] text-gray-400 lg:grid">
                       <span>名称</span>
-                      <span>宽 x 高</span>
+                      <span>宽 x 高（可空）</span>
                       <span />
                     </div>
                     {templateResolutionOptions.map((option) => {
                       const { width, height } = splitResolutionSize(option.size)
                       return (
-                        <div key={option.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.5rem]">
+                        <div key={option.id} className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.5rem]">
                           <Input
                             value={option.name || ''}
                             onChange={(e) => updateTemplateResolutionOption(option.id, { name: e.target.value })}
-                            placeholder="例如：2k宽屏"
+                            placeholder="例如：方图 / 竖版海报"
                             className="h-9"
                           />
                           <div className="grid grid-cols-[minmax(0,1fr)_1.25rem_minmax(0,1fr)] items-center gap-1.5">
@@ -2252,7 +2341,7 @@ export default function AdminDashboard({ onLogout }: Props) {
                               onChange={(e) => updateTemplateResolutionDimension(option.id, 'width', e.target.value)}
                               inputMode="numeric"
                               pattern="[0-9]*"
-                              placeholder="宽"
+                              placeholder="自动"
                               aria-label="分辨率宽度"
                               className="h-9 font-mono"
                             />
@@ -2262,7 +2351,7 @@ export default function AdminDashboard({ onLogout }: Props) {
                               onChange={(e) => updateTemplateResolutionDimension(option.id, 'height', e.target.value)}
                               inputMode="numeric"
                               pattern="[0-9]*"
-                              placeholder="高"
+                              placeholder="自动"
                               aria-label="分辨率高度"
                               className="h-9 font-mono"
                             />
@@ -2273,8 +2362,8 @@ export default function AdminDashboard({ onLogout }: Props) {
                             size="icon"
                             onClick={() => removeTemplateResolutionOption(option.id)}
                             className="h-9 w-9 text-gray-400 hover:text-red-500"
-                            aria-label="删除档位"
-                            title="删除档位"
+                            aria-label="删除分辨率"
+                            title="删除分辨率"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -2284,6 +2373,51 @@ export default function AdminDashboard({ onLogout }: Props) {
                   </div>
                 )}
               </div>
+
+              <div className="mt-3 rounded-xl border border-gray-200/70 bg-gray-50/70 p-3 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-medium text-gray-600 dark:text-gray-300">图片质量与积分档位</div>
+                    <div className="mt-1 text-[11px] text-gray-400">固定提供自动、低、中、高质量；这里只能修改每张图消耗积分，不影响分辨率。</div>
+                  </div>
+                </div>
+                {templateQualityOptions.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-gray-200 bg-white/70 px-3 py-4 text-center text-xs text-gray-400 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                    固定使用自动、低、中、高四个质量档位，只需配置积分消耗
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="hidden grid-cols-[minmax(0,1fr)_7rem] gap-2 px-1 text-[11px] text-gray-400 lg:grid">
+                      <span>质量</span>
+                      <span>积分/张</span>
+                    </div>
+                    {templateQualityOptions.map((option) => {
+                      const quality = normalizeTaskQuality(option.quality)
+                      return (
+                        <div key={option.id} className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_7rem]">
+                          <div className="flex h-9 items-center px-1 text-sm font-medium text-gray-700 dark:text-gray-200">
+                            <span className={`rounded-full px-2.5 py-1 ${TEMPLATE_QUALITY_BADGE_CLASS_NAMES[quality]}`}>
+                              {TEMPLATE_QUALITY_LABELS[quality]}
+                            </span>
+                          </div>
+                          <Input
+                            value={option.creditCost == null ? String(templateOptionCreditValue(templateCreditCost)) : String(option.creditCost)}
+                            onChange={(e) => updateTemplateQualityOption(option.id, { creditCost: Number(e.target.value.replace(/\D/g, '')) || 0 })}
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            type="number"
+                            min={1}
+                            max={1000}
+                            aria-label="质量档位积分消耗"
+                            className="h-9"
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
               <div className="mt-3">
                 <FieldSchemaEditor promptBody={templatePromptBody} fields={templateFields} onChange={setTemplateFields} />
               </div>

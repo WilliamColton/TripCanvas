@@ -48,6 +48,8 @@ public class GenerationServiceImpl implements GenerationService {
         int templateCreditCost = 1;
         String templateResolutionId = null;
         String templateResolutionName = null;
+        String templateQualityId = null;
+        String templateQualityName = null;
         TemplateInputs templateInputs = request.templateInputs();
         if ("template".equals(promptMode) || request.templateId() != null && !request.templateId().isBlank()) {
             promptMode = "template";
@@ -65,10 +67,20 @@ public class GenerationServiceImpl implements GenerationService {
             templateCreditCost = assembly.template().creditCost();
             templateInputs = assembly.inputs();
             PromptTemplateService.ResolvedResolutionOption resolution = templateService.resolveResolution(userId, request.templateId(), request.templateResolutionId());
-            params = withSize(params, resolution == null ? ImageSizeUtils.POOL_AUTO : resolution.size());
+            PromptTemplateService.ResolvedQualityOption quality = templateService.resolveQuality(userId, request.templateId(), request.templateQualityId());
+            params = withSizeAndQuality(
+                params,
+                resolution == null ? ImageSizeUtils.POOL_AUTO : resolution.size(),
+                quality == null ? "auto" : quality.quality()
+            );
             if (resolution != null) {
                 templateResolutionId = resolution.id();
                 templateResolutionName = resolution.name();
+            }
+            if (quality != null) {
+                templateQualityId = quality.id();
+                templateQualityName = quality.name();
+                templateCreditCost = quality.creditCost() == null ? templateCreditCost : quality.creditCost();
             }
         }
         if (assembledPrompt == null || assembledPrompt.isBlank()) {
@@ -84,6 +96,8 @@ public class GenerationServiceImpl implements GenerationService {
             request.templateId(),
             templateResolutionId,
             templateResolutionName,
+            templateQualityId,
+            templateQualityName,
             templateTitle,
             templateVersion,
             totalCreditCost,
@@ -115,11 +129,11 @@ public class GenerationServiceImpl implements GenerationService {
         return new SubmitResult(task.id(), "queued");
     }
 
-    private TaskParamsResponse withSize(TaskParamsResponse source, String size) {
+    private TaskParamsResponse withSizeAndQuality(TaskParamsResponse source, String size, String quality) {
         return new TaskParamsResponse(
             size,
             null,
-            source.quality(),
+            quality == null || quality.isBlank() ? "auto" : quality,
             source.outputFormat(),
             source.outputCompression(),
             source.moderation(),

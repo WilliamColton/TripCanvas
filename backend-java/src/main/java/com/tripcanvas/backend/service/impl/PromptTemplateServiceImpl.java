@@ -3,6 +3,7 @@ package com.tripcanvas.backend.service.impl;
 import com.alicp.jetcache.Cache;
 import com.alicp.jetcache.CacheManager;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.mybatisflex.core.query.QueryWrapper;
 import com.tripcanvas.backend.cache.CacheNames;
 import com.tripcanvas.backend.common.exception.ApiException;
@@ -10,6 +11,7 @@ import com.tripcanvas.backend.config.JetCacheConfigs;
 import com.tripcanvas.backend.dto.TemplateInputs;
 import com.tripcanvas.backend.dto.request.TemplateRequests;
 import com.tripcanvas.backend.dto.response.PromptTemplateFieldResponse;
+import com.tripcanvas.backend.dto.response.PromptTemplateQualityOptionResponse;
 import com.tripcanvas.backend.dto.response.PromptTemplateResolutionOptionResponse;
 import com.tripcanvas.backend.dto.response.PromptTemplateResponse;
 import com.tripcanvas.backend.entity.PromptTemplateEntity;
@@ -75,7 +77,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
                 "admin", "published", "public", "user", userId, "archived"),
             "sort_order ASC, updated_at DESC"
         );
-        List<PromptTemplateResponse> response = mapper.selectListByQuery(query).stream().map(t -> toResponse(t, shouldExpose(userId, t, false), false)).toList();
+        List<PromptTemplateResponse> response = mapper.selectListByQuery(query).stream().map(t -> toResponse(t, shouldExpose(userId, t, false), true)).toList();
         templateUserListCache.put(key, response);
         return response;
     }
@@ -88,7 +90,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             return cached;
         }
         PromptTemplateEntity entity = findTemplateForUser(userId, templateId);
-        PromptTemplateResponse response = toResponse(entity, shouldExpose(userId, entity, false), false);
+        PromptTemplateResponse response = toResponse(entity, shouldExpose(userId, entity, false), true);
         templateUserDetailCache.put(key, response);
         return response;
     }
@@ -225,7 +227,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         return new PromptAssembly(
             buildDisplayPrompt(entity.getTitle(), fields, normalized, extra),
             String.join("\n\n", parts),
-            toResponse(entity, shouldExpose(userId, entity, false), false),
+            toResponse(entity, shouldExpose(userId, entity, false), true),
             new TemplateInputs(normalized)
         );
     }
@@ -247,7 +249,38 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
                 .filter(option -> Objects.equals(option.id(), requestedId))
                 .findFirst()
                 .orElseThrow(() -> ApiException.badRequest("分辨率档位无效"));
-        return new ResolvedResolutionOption(selected.id(), selected.name(), selected.size());
+        return new ResolvedResolutionOption(
+            selected.id(),
+            selected.name(),
+            selected.size()
+        );
+    }
+
+    @Override
+    public ResolvedQualityOption resolveQuality(String userId, String templateId, String templateQualityId) {
+        PromptTemplateEntity entity = findTemplateForUser(userId, templateId);
+        if (!"published".equals(entity.getStatus())) {
+            throw ApiException.badRequest("模板不可用");
+        }
+        int fallbackCreditCost = normalizeCreditCost(entity.getCreditCost());
+        List<PromptTemplateQualityOptionResponse> options = decodeQualityOptions(
+            entity.getQualityOptionsJson(),
+            entity.getResolutionOptionsJson(),
+            fallbackCreditCost
+        );
+        String requestedId = trim(templateQualityId);
+        PromptTemplateQualityOptionResponse selected = requestedId.isEmpty()
+            ? options.get(0)
+            : options.stream()
+                .filter(option -> Objects.equals(option.id(), requestedId))
+                .findFirst()
+                .orElseThrow(() -> ApiException.badRequest("质量档位无效"));
+        return new ResolvedQualityOption(
+            selected.id(),
+            selected.name(),
+            decodeQuality(selected.quality()),
+            selected.creditCost() == null ? fallbackCreditCost : normalizeCreditCost(selected.creditCost())
+        );
     }
 
     private Map<String, Object> validateInputs(List<PromptTemplateFieldResponse> fields, TemplateInputs inputs) {
@@ -360,12 +393,16 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         List<PromptTemplateResolutionOptionResponse> resolutionOptions = admin
             ? normalizeResolutionOptions(request.resolutionOptions())
             : List.of();
+        List<PromptTemplateQualityOptionResponse> qualityOptions = admin
+            ? normalizeQualityOptions(request.qualityOptions(), creditCost)
+            : List.of();
         return new NormalizedTemplate(
             title,
             category,
             trim(request.description()),
             request.fieldSchema() == null ? List.of() : request.fieldSchema(),
             resolutionOptions,
+            qualityOptions,
             emptyToNull(request.previewImageId()),
             promptBody,
             trim(request.negativePrompt()),
@@ -384,6 +421,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             .setDescription(input.description())
             .setFieldSchemaJson(JsonUtils.stringify(input.fields()))
             .setResolutionOptionsJson(JsonUtils.stringify(input.resolutionOptions()))
+            .setQualityOptionsJson(JsonUtils.stringify(input.qualityOptions()))
             .setPreviewImageId(input.previewImageId())
             .setPromptBody(input.promptBody())
             .setNegativePrompt(input.negativePrompt())
@@ -403,6 +441,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             .setDescription(input.description())
             .setFieldSchemaJson(JsonUtils.stringify(input.fields()))
             .setResolutionOptionsJson(JsonUtils.stringify(input.resolutionOptions()))
+            .setQualityOptionsJson(JsonUtils.stringify(input.qualityOptions()))
             .setPreviewImageId(input.previewImageId())
             .setPromptBody(input.promptBody())
             .setNegativePrompt(input.negativePrompt())
@@ -573,6 +612,7 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             entity.getDescription(),
             decodeFields(entity.getFieldSchemaJson()),
             resolutionOptionsForResponse(entity.getResolutionOptionsJson(), exposeResolutionSize),
+            qualityOptionsForResponse(entity.getQualityOptionsJson(), entity.getResolutionOptionsJson(), normalizeCreditCost(entity.getCreditCost())),
             nullToEmpty(entity.getPreviewImageId()),
             exposePromptBody ? entity.getPromptBody() : null,
             exposePromptBody ? entity.getNegativePrompt() : null,
@@ -617,17 +657,15 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             if (name.codePointCount(0, name.length()) > 100) {
                 throw ApiException.badRequest("分辨率名称最多 100 个字符");
             }
-            if (rawSize.isEmpty()) {
-                throw ApiException.badRequest("真实尺寸不能为空");
-            }
             String size;
-            try {
-                size = ImageSizeUtils.normalizeImageSize(rawSize);
-            } catch (IllegalArgumentException e) {
-                throw ApiException.badRequest("真实尺寸参数无效");
-            }
-            if (ImageSizeUtils.POOL_AUTO.equals(size)) {
-                throw ApiException.badRequest("真实尺寸不能为空");
+            if (rawSize.isEmpty()) {
+                size = ImageSizeUtils.POOL_AUTO;
+            } else {
+                try {
+                    size = ImageSizeUtils.normalizeImageSize(rawSize);
+                } catch (IllegalArgumentException e) {
+                    throw ApiException.badRequest("真实尺寸参数无效");
+                }
             }
             String id = trim(option.id());
             if (id.isEmpty()) {
@@ -644,24 +682,99 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         return result;
     }
 
+    private List<PromptTemplateQualityOptionResponse> normalizeQualityOptions(List<PromptTemplateQualityOptionResponse> options, int fallbackCreditCost) {
+        Map<String, Integer> creditCostByQuality = new LinkedHashMap<>();
+        for (PromptTemplateQualityOptionResponse option : options == null ? List.<PromptTemplateQualityOptionResponse>of() : options) {
+            if (option == null) {
+                continue;
+            }
+            String quality = normalizeQuality(option.quality());
+            creditCostByQuality.put(quality, option.creditCost() == null ? fallbackCreditCost : normalizeCreditCost(option.creditCost()));
+        }
+        return fixedQualityOptions(creditCostByQuality, fallbackCreditCost);
+    }
+
     private List<PromptTemplateResolutionOptionResponse> decodeResolutionOptions(String json) {
+        List<OptionNode> nodes = decodeOptionNodes(json);
+        if (nodes.isEmpty()) {
+            return List.of();
+        }
+        List<PromptTemplateResolutionOptionResponse> result = new ArrayList<>();
+        for (OptionNode option : nodes) {
+            String id = trim(option.id());
+            String name = trim(option.name());
+            String rawSize = trim(option.size());
+            String rawQuality = trim(option.quality());
+            if (id.isEmpty() || name.isEmpty()) {
+                continue;
+            }
+            // 兼容上一版误把“质量”存在 resolutionOptions 的数据：只有质量、没有真实尺寸时，不再当作分辨率展示。
+            if (!rawQuality.isEmpty() && (rawSize.isEmpty() || ImageSizeUtils.POOL_AUTO.equalsIgnoreCase(rawSize))) {
+                continue;
+            }
+            String size;
+            try {
+                size = rawSize.isEmpty() ? ImageSizeUtils.POOL_AUTO : ImageSizeUtils.normalizeImageSize(rawSize);
+            } catch (IllegalArgumentException e) {
+                size = ImageSizeUtils.POOL_AUTO;
+            }
+            result.add(new PromptTemplateResolutionOptionResponse(id, name, size));
+        }
+        return result;
+    }
+
+    private List<PromptTemplateQualityOptionResponse> decodeQualityOptions(String json, String legacyResolutionJson, int fallbackCreditCost) {
+        List<PromptTemplateQualityOptionResponse> configured = decodeQualityOptionNodes(decodeOptionNodes(json), fallbackCreditCost, false);
+        if (configured.isEmpty()) {
+            configured = decodeQualityOptionNodes(decodeOptionNodes(legacyResolutionJson), fallbackCreditCost, true);
+        }
+        return fixedQualityOptions(configured, fallbackCreditCost);
+    }
+
+    private List<PromptTemplateQualityOptionResponse> decodeQualityOptionNodes(List<OptionNode> nodes, int fallbackCreditCost, boolean legacyOnlyWithQualityFields) {
+        List<PromptTemplateQualityOptionResponse> result = new ArrayList<>();
+        for (OptionNode option : nodes) {
+            String id = trim(option.id());
+            String name = trim(option.name());
+            String rawQuality = trim(option.quality());
+            if (id.isEmpty()) {
+                continue;
+            }
+            if (legacyOnlyWithQualityFields && rawQuality.isEmpty()) {
+                continue;
+            }
+            String quality = decodeQuality(rawQuality);
+            if (name.isEmpty()) {
+                name = qualityLabel(quality);
+            }
+            result.add(new PromptTemplateQualityOptionResponse(
+                id,
+                name,
+                quality,
+                option.creditCost() == null ? fallbackCreditCost : normalizeCreditCost(option.creditCost())
+            ));
+        }
+        return result;
+    }
+
+    private List<OptionNode> decodeOptionNodes(String json) {
         try {
-            List<PromptTemplateResolutionOptionResponse> options = JsonUtils.mapper().readValue(json == null ? "[]" : json, new TypeReference<List<PromptTemplateResolutionOptionResponse>>() {});
-            if (options == null || options.isEmpty()) {
+            JsonNode root = JsonUtils.mapper().readTree(json == null || json.isBlank() ? "[]" : json);
+            if (root == null || !root.isArray()) {
                 return List.of();
             }
-            List<PromptTemplateResolutionOptionResponse> result = new ArrayList<>();
-            for (PromptTemplateResolutionOptionResponse option : options) {
-                if (option == null) {
+            List<OptionNode> result = new ArrayList<>();
+            for (JsonNode item : root) {
+                if (item == null || item.isNull()) {
                     continue;
                 }
-                String id = trim(option.id());
-                String name = trim(option.name());
-                String size = trim(option.size());
-                if (id.isEmpty() || name.isEmpty() || size.isEmpty()) {
-                    continue;
-                }
-                result.add(new PromptTemplateResolutionOptionResponse(id, name, size));
+                result.add(new OptionNode(
+                    nodeText(item, "id"),
+                    nodeText(item, "name"),
+                    nodeText(item, "size"),
+                    nodeText(item, "quality"),
+                    nodeInteger(item, "creditCost")
+                ));
             }
             return result;
         } catch (Exception e) {
@@ -671,8 +784,16 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
 
     private List<PromptTemplateResolutionOptionResponse> resolutionOptionsForResponse(String json, boolean exposeSize) {
         return decodeResolutionOptions(json).stream()
-            .map(option -> new PromptTemplateResolutionOptionResponse(option.id(), option.name(), exposeSize ? option.size() : null))
+            .map(option -> new PromptTemplateResolutionOptionResponse(
+                option.id(),
+                option.name(),
+                exposeSize ? option.size() : null
+            ))
             .toList();
+    }
+
+    private List<PromptTemplateQualityOptionResponse> qualityOptionsForResponse(String json, String legacyResolutionJson, int fallbackCreditCost) {
+        return decodeQualityOptions(json, legacyResolutionJson, fallbackCreditCost);
     }
 
     private boolean shouldExpose(String userId, PromptTemplateEntity entity, boolean admin) {
@@ -711,6 +832,85 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
             throw ApiException.badRequest("积分消耗必须是 1 到 1000 的整数");
         }
         return value;
+    }
+
+    private List<PromptTemplateQualityOptionResponse> defaultQualityOptions(int fallbackCreditCost) {
+        return fixedQualityOptions(Map.of(), fallbackCreditCost);
+    }
+
+    private List<PromptTemplateQualityOptionResponse> fixedQualityOptions(List<PromptTemplateQualityOptionResponse> options, int fallbackCreditCost) {
+        Map<String, Integer> creditCostByQuality = new LinkedHashMap<>();
+        for (PromptTemplateQualityOptionResponse option : options == null ? List.<PromptTemplateQualityOptionResponse>of() : options) {
+            if (option == null) {
+                continue;
+            }
+            String quality = decodeQuality(option.quality());
+            creditCostByQuality.put(quality, option.creditCost() == null ? fallbackCreditCost : normalizeCreditCost(option.creditCost()));
+        }
+        return fixedQualityOptions(creditCostByQuality, fallbackCreditCost);
+    }
+
+    private List<PromptTemplateQualityOptionResponse> fixedQualityOptions(Map<String, Integer> creditCostByQuality, int fallbackCreditCost) {
+        int normalizedFallbackCreditCost = normalizeCreditCost(fallbackCreditCost);
+        return List.of(
+            fixedQualityOption("auto", creditCostByQuality, normalizedFallbackCreditCost),
+            fixedQualityOption("low", creditCostByQuality, normalizedFallbackCreditCost),
+            fixedQualityOption("medium", creditCostByQuality, normalizedFallbackCreditCost),
+            fixedQualityOption("high", creditCostByQuality, normalizedFallbackCreditCost)
+        );
+    }
+
+    private PromptTemplateQualityOptionResponse fixedQualityOption(String quality, Map<String, Integer> creditCostByQuality, int fallbackCreditCost) {
+        Integer creditCost = creditCostByQuality == null ? null : creditCostByQuality.get(quality);
+        return new PromptTemplateQualityOptionResponse(
+            "quality_" + quality,
+            qualityLabel(quality),
+            quality,
+            creditCost == null ? fallbackCreditCost : normalizeCreditCost(creditCost)
+        );
+    }
+
+    private String normalizeQuality(String quality) {
+        String value = quality == null || quality.isBlank() ? "auto" : quality.trim();
+        if (List.of("auto", "low", "medium", "high").contains(value)) {
+            return value;
+        }
+        throw ApiException.badRequest("质量参数无效");
+    }
+
+    private String decodeQuality(String quality) {
+        String value = quality == null || quality.isBlank() ? "auto" : quality.trim();
+        return List.of("auto", "low", "medium", "high").contains(value) ? value : "auto";
+    }
+
+    private String qualityLabel(String quality) {
+        return switch (decodeQuality(quality)) {
+            case "low" -> "低质量";
+            case "medium" -> "中质量";
+            case "high" -> "高质量";
+            default -> "自动";
+        };
+    }
+
+    private String nodeText(JsonNode node, String field) {
+        JsonNode value = node == null ? null : node.get(field);
+        return value == null || value.isNull() ? null : value.asText();
+    }
+
+    private Integer nodeInteger(JsonNode node, String field) {
+        JsonNode value = node == null ? null : node.get(field);
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        if (value.isInt() || value.isLong()) {
+            return value.asInt();
+        }
+        try {
+            String text = value.asText();
+            return text == null || text.isBlank() ? null : Integer.parseInt(text.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private boolean isValidFieldType(String type) {
@@ -781,12 +981,16 @@ public class PromptTemplateServiceImpl implements PromptTemplateService {
         return value.substring(0, value.offsetByCodePoints(0, maxRunes)) + "...";
     }
 
+    private record OptionNode(String id, String name, String size, String quality, Integer creditCost) {
+    }
+
     private record NormalizedTemplate(
         String title,
         String category,
         String description,
         List<PromptTemplateFieldResponse> fields,
         List<PromptTemplateResolutionOptionResponse> resolutionOptions,
+        List<PromptTemplateQualityOptionResponse> qualityOptions,
         String previewImageId,
         String promptBody,
         String negativePrompt,
